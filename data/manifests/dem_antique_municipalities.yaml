@@ -1,0 +1,119 @@
+schema_version: "1.0"
+
+dataset_id: dem_antique_municipalities
+title: "Copernicus DEM GLO-30 — Antique Study Municipality Tiles (N10_E121, N10_E122)"
+category: terrain_dem
+
+description: >
+  Digital Elevation Model for the three FloodRoute study municipalities sourced from
+  the Copernicus DEM GLO-30 (Global 30-metre DEM), a 1 arc-second (~30 m) resolution
+  DSM derived from TanDEM-X radar interferometry (DLR / Airbus).  Distributed as
+  Cloud-Optimized GeoTIFF (COG) tiles via the AWS Open Data Program
+  (s3://copernicus-dem-30m) without authentication.
+
+  Source selection rationale (Copernicus GLO-30 preferred over alternatives):
+    Copernicus GLO-30:
+      — 30 m resolution, adequate for road-network traversability at municipal scale
+      — EGM2008 vertical datum (more accurate than SRTM EGM96 in tropical archipelago)
+      — Copernicus free licence (attribution required, no registration)
+      — Direct HTTPS download from AWS S3, fully reproducible without account
+      — No data voids in Philippines (radar-derived, cloud-independent)
+    SRTM 1 arc-sec (~30 m): public domain but requires USGS Earth Explorer account;
+      EGM96 vertical datum; data voids in steep terrain; older (Feb 2000).
+    AW3D30 (JAXA, 30 m): requires free registration on JAXA portal; EGM96 datum.
+    PHIL-LiDAR 5 m: highest resolution but requires institutional registration and
+      formal data request to DOST-ASTI; not directly reproducible.
+
+  Tile coverage analysis (2026-08-22):
+    All three study municipalities fall within the 10°N–11°N latitude band:
+      Sibalom:            bbox ~10.683°N–10.845°N, 121.964°E–122.207°E (spans both tiles)
+      San Jose (Capital): bbox ~10.700°N–10.810°N, 121.850°E–122.000°E (mostly N10_E121)
+      Hamtic:             bbox ~10.581°N–10.754°N, 121.950°E–122.066°E (spans both tiles)
+
+    Tiles selected (2 tiles cover all three municipalities completely):
+
+    Tile         File                          Covers
+    ----------   ----------------------------  -----------------------------------------------
+    N10_E121     cop_dem30_N10_E121.tif        West parts of San Jose & Hamtic; small western
+                                               edge of Sibalom (121°E–122°E, 10°N–11°N)
+    N10_E122     cop_dem30_N10_E122.tif        East parts of Sibalom (primary experiment area);
+                                               east parts of San Jose and Hamtic (122°E–123°E)
+
+    Source URLs (direct HTTPS — no authentication required):
+      N10_E121: https://copernicus-dem-30m.s3.amazonaws.com/Copernicus_DSM_COG_10_N10_00_E121_00_DEM/Copernicus_DSM_COG_10_N10_00_E121_00_DEM.tif
+      N10_E122: https://copernicus-dem-30m.s3.amazonaws.com/Copernicus_DSM_COG_10_N10_00_E122_00_DEM/Copernicus_DSM_COG_10_N10_00_E122_00_DEM.tif
+
+    Tiles NOT required for the three-municipality study scope:
+      N09_E121/N09_E122 — all municipalities are north of 10°N; N09 covers 9°N–10°N only
+      N11_E121/N11_E122 — all municipalities are south of 11°N; N11 covers 11°N–12°N only
+
+source_agency: "DLR / Airbus Defence and Space — Copernicus Programme (ESA / European Union)"
+source_url: "https://copernicus-dem-30m.s3.amazonaws.com/"
+landing_page_url: "https://registry.opendata.aws/copernicus-dem/"
+license_name: "Copernicus DEM — free use with attribution"
+license_url: "https://copernicus-dem-30m.s3.amazonaws.com/readme.html"
+
+access_method: direct_download
+acquisition_status: acquired
+acquisition_date: "2026-08-22"
+
+temporal_coverage: "2010–2014"   # TanDEM-X acquisitions; GLO-30 public release May 2022
+geographic_coverage: >
+  Two 1°×1° GLO-30 tiles covering all three Antique study municipalities:
+  Sibalom (primary), San Jose de Buenavista, and Hamtic (both validation areas).
+  N10_E121: 10°N–11°N, 121°E–122°E.  N10_E122: 10°N–11°N, 122°E–123°E.
+expected_format: geotiff
+
+local_path: "raw/dem_antique/cop_dem30_N10_E121.tif"   # Primary tile; update after merge
+file_size_bytes: 1785776   # N10_E121 only; N10_E122 is 21,880,364 bytes
+sha256: "0845a25e3fe03791cd57a0a868a82c1a5c5f73396c7e735a23a90f027743cd26"   # N10_E121
+crs: "EPSG:4326"           # WGS84 horizontal; EGM2008 geoid vertical datum
+
+provenance: observed
+validation_status: partially_validated
+validation_notes: >
+  Validation completed 2026-08-22:
+
+  Tile N10_E121 (cop_dem30_N10_E121.tif):
+    File size:    1,785,776 bytes (matches HEAD request)
+    sha256:       0845a25e3fe03791cd57a0a868a82c1a5c5f73396c7e735a23a90f027743cd26
+    TIFF magic:   PASSED (little-endian TIFF, validate_geotiff_file)
+    rasterio CRS: EPSG:4326 PASSED
+    Dimensions:   3600 × 3600 pixels (1 arc-second / ~30 m)
+    Pixel size:   0.000278° (~30 m at equator)
+    Bounds:       W=120.9999°, S=10.0001°, E=121.9999°, N=11.0001°
+    Band count:   1
+    Nodata:       None reported (COG — nodata masked internally)
+    Municipality coverage check: covers western extents of San Jose and Hamtic ✓
+
+  Tile N10_E122 (cop_dem30_N10_E122.tif):
+    File size:    21,880,364 bytes (matches HEAD request)
+    sha256:       c377f686fe1e1a21a2b7e99056f5a4414c57011541a5359f0b4e4ac6f0840e6f
+    TIFF magic:   PASSED (little-endian TIFF, validate_geotiff_file)
+    rasterio CRS: EPSG:4326 PASSED
+    Dimensions:   3600 × 3600 pixels (1 arc-second / ~30 m)
+    Pixel size:   0.000278° (~30 m at equator)
+    Bounds:       W=121.9999°, S=10.0001°, E=122.9999°, N=11.0001°
+    Band count:   1
+    Nodata:       None reported (COG — nodata masked internally)
+    Municipality coverage check: covers eastern Sibalom (primary experiment) ✓
+
+  Combined coverage verification:
+    N10_E121 (W:121°, E:122°) + N10_E122 (W:122°, E:123°) together span 121°–123°E,
+    10°–11°N, which fully encompasses:
+      Sibalom            (10.683°–10.845°N, 121.964°–122.207°E)  ✓ both tiles
+      San Jose (Capital) (10.700°–10.810°N, 121.850°–122.000°E)  ✓ N10_E121
+      Hamtic             (10.581°–10.754°N, 121.950°–122.066°E)  ✓ both tiles
+
+  Pending (Stage 3):
+    — Value range check: plausible terrain elevation for Antique (0–2,030 m a.s.l.)
+    — NoData masking: verify ocean areas properly masked after gdalbuildvrt merge
+    — Tiles to be merged with GDAL (gdalbuildvrt + gdal_translate) in Stage 3
+
+required_for_stage: 2
+citation: >
+  © DLR e.V. 2010–2014 and © Airbus Defence and Space GmbH 2014–2018 provided
+  under COPERNICUS by the European Union and ESA; all rights reserved.
+  Copernicus DEM GLO-30.  Distributed via AWS Open Data Program.
+  https://registry.opendata.aws/copernicus-dem/
+  Tiles N10_E121 and N10_E122 accessed 2026-08-22.

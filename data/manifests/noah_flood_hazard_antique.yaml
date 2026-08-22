@@ -1,47 +1,130 @@
 schema_version: "1.0"
 
 dataset_id: noah_flood_hazard_antique
-title: "DOST-ASTI / GeoRisk Flood Hazard Maps — Antique Province"
+title: "Phil-LiDAR 1 Flood Hazard Maps — Sibalom and San Jose de Buenavista, Antique"
 category: flood_hazard
 
 description: >
-  Flood hazard inundation maps for Antique Province produced by the
-  Department of Science and Technology — Advanced Science and Technology
-  Institute (DOST-ASTI), formerly under Project NOAH (Nationwide Operational
-  Assessment of Hazards). Maps typically cover 5-year, 25-year, and 100-year
-  return periods at 10-metre resolution and are publicly accessible through
-  the GeoRisk Philippines platform. Exact coverage and return periods for
-  San Jose de Buenavista municipality must be confirmed on the portal.
+  LiDAR-derived flood hazard polygons produced by the Phil-LiDAR 1 Program
+  (DOST-ASTI / UP TCAGP / DREAM Program) under DOST Project NOAH successor activities.
+  Three return-period layers (5yr / 25yr / 100yr) at 10-metre resolution are available
+  for two of the three study municipalities:
 
-source_agency: "DOST-ASTI / GeoRisk Philippines"
-source_url: null           # Interactive portal; specific layer download URL not confirmed
-landing_page_url: "https://georisk.gov.ph/hazard-maps/"
-license_name: null         # Philippine government data terms — to be confirmed on portal
-license_url: null
+  SAN JOSE DE BUENAVISTA (PSGC-prefix layer naming):
+    5-year   (165.2 mm design storm): ph060613000_fh5yr_10m
+    25-year  (4% annual probability): ph060613000_fh25yr_10m
+    100-year (304.5 mm, 1% AEP)    : ph060613000_fh100yr_10m
+
+  SIBALOM (river-name layer naming — Sibalom River basin):
+    5-year  : sibalom_fh5yr_10m
+    25-year : sibalom_fh25yr_10m
+    100-year: sibalom_fh100yr_10m
+    Tributary/upper basin supplement: sibalom2_fh5yr_10m
+
+  HAMTIC (not available):
+    No Phil-LiDAR 1 flood hazard layers are publicly available for Hamtic
+    municipality.  The Hamtic River is approximately 6 km in length — likely
+    too short for a full LiDAR hydrological survey to have been commissioned.
+    Hamtic is retained as a reduced-depth validation area; flood hazard
+    analysis for Hamtic will use coarser NOAH/GloFAS-derived inputs if
+    available, or will be explicitly scoped out of flood-hazard comparisons.
+
+  Each layer classifies flood depth into three hazard levels:
+    Low    — 0.10–0.50 m depth (yellow)
+    Medium — 0.50–1.50 m depth (orange)
+    High   — > 1.50 m depth (red)
+
+  Coverage is municipality-specific per layer set.  Sibalom layers are named by
+  river basin, not by PSGC prefix; cross-check barangay lists against admin4
+  boundaries to confirm complete coverage.
+
+  Source: LiPAD (LiDAR Portal for Archiving and Distribution), hosted at
+  https://lipad-fmc.dream.upd.edu.ph by the UP Training Center for Applied
+  Geodesy and Photogrammetry (UP TCAGP).
+
+  Acquisition instructions (manual — requires EULA acceptance per layer):
+    San Jose de Buenavista layer landing pages (verified 2026-08-22):
+      5-year : https://lipad-fmc.dream.upd.edu.ph/layers/geonode:ph060613000_fh5yr_10m
+      25-year: https://lipad-fmc.dream.upd.edu.ph/layers/geonode:ph060613000_fh25yr_10m
+      100-year: https://lipad-fmc.dream.upd.edu.ph/layers/geonode:ph060613000_fh100yr_10m
+
+    Sibalom layer landing pages (verified 2026-08-22):
+      5-year  : https://lipad-fmc.dream.upd.edu.ph/layers/geonode:sibalom_fh5yr_10m
+      25-year : https://lipad-fmc.dream.upd.edu.ph/layers/geonode:sibalom_fh25yr_10m
+      100-year: https://lipad-fmc.dream.upd.edu.ph/layers/geonode:sibalom_fh100yr_10m
+      Supplemental: https://lipad-fmc.dream.upd.edu.ph/layers/geonode:sibalom2_fh5yr_10m
+
+    WFS download URL pattern (after EULA acceptance):
+      https://lipad-fmc.dream.upd.edu.ph/geoserver/wfs?format_options=charset%3AUTF-8
+        &typename=geonode%3A[LAYER_NAME]&outputFormat=SHAPE-ZIP
+        &version=1.0.0&service=WFS&request=GetFeature
+
+    Steps:
+      1. Visit each landing page and accept the Phil-LiDAR 1 End User Licence
+         Agreement (EULA); provide institutional affiliation and intended use.
+      2. Download Shapefile (WGS84) for each return period.
+      3. Save to data/raw/noah_flood_hazard_antique/ as separate ZIPs:
+         San Jose: fh5yr_ph060613000.zip, fh25yr_ph060613000.zip, fh100yr_ph060613000.zip
+         Sibalom:  fh5yr_sibalom.zip, fh25yr_sibalom.zip, fh100yr_sibalom.zip,
+                   fh5yr_sibalom2.zip
+      4. Update local_path and record file_size_bytes / sha256 per layer.
+      5. Run: floodroute verify-dataset noah_flood_hazard_antique
+
+  Licence: Phil-LiDAR 1 EULA — non-commercial educational, research, NGO, and
+  government use permitted; commercial use prohibited; derivatives must credit
+  "Phil-LiDAR Program & DREAM".
+
+source_agency: "Phil-LiDAR 1 Program — DOST-ASTI / UP TCAGP / DREAM Program"
+source_url: null           # Multiple WFS endpoints; no single file URL
+landing_page_url: "https://lipad-fmc.dream.upd.edu.ph/layers/geonode:ph060613000_fh5yr_10m"
+license_name: "Phil-LiDAR 1 End User Licence Agreement (non-commercial research use)"
+license_url: null          # EULA presented on each layer page; no separate licence URL
 
 access_method: manual_download
 acquisition_status: not_requested
 acquisition_date: null
 
-temporal_coverage: null    # Publication date of the hazard model — to be confirmed
-geographic_coverage: "Antique Province, Region VI, Philippines"
-expected_format: null      # Likely GeoTIFF raster or Shapefile — to be confirmed
+temporal_coverage: "2017"   # Published June 14, 2017; LiDAR surveys 2013–2016
+geographic_coverage: >
+  Sibalom municipality (primary experiment) and San Jose de Buenavista
+  (reduced-depth validation area), Antique Province, Region VI, Philippines.
+  Hamtic municipality: no LiPAD layers available (see description).
+expected_format: shapefile
 
-local_path: "raw/noah_flood_hazard_antique.zip"
+local_path: "raw/noah_flood_hazard_antique/"   # Directory; multiple ZIPs per municipality
 file_size_bytes: null
 sha256: null
-crs: null                  # Likely EPSG:4326 or a Philippine UTM zone — confirm on download
+crs: "EPSG:4326"           # WGS84 Shapefile option confirmed on LiPAD layer pages
 
 provenance: derived
 validation_status: not_validated
 validation_notes: >
-  Flood hazard maps are modelled/derived outputs from hydrological and hydraulic
-  simulations, not measured inundation extents. Provenance is derived.
-  The scenario_based category is reserved for thesis-created experimental flood
-  stages and assumptions. Return periods and source model documentation must be
-  confirmed from DOST-ASTI before use in analysis.
+  Flood hazard maps are modelled/derived outputs from LiDAR-derived hydrological
+  and hydraulic simulations, not measured inundation extents.  Provenance is derived.
+  Hazard classes (Low / Medium / High) represent depth-range thresholds, not temporal
+  return periods — do not conflate hazard class with flood-stage timing.
 
-required_for_stage: 1
+  After download, validate each layer ZIP:
+  1. ZIP opens without error (validate_zip_file).
+  2. ZIP contains .shp, .dbf, .prj, .shx files.
+  3. Attribute table includes a hazard-class or depth field.
+  4. Geometry type is polygon covering study municipality barangays.
+  5. CRS from .prj confirms EPSG:4326 (WGS84).
+  6. All acquired return periods (5yr, 25yr, 100yr) present for each municipality
+     before Stage 3 use.
+  7. Sibalom layers: verify coverage aligns with Sibalom municipality barangays
+     (76 barangays, adm3_pcode=PH0600616) by spatial join against phl_admin4 in Stage 3.
+  8. Hamtic absence: document explicitly in thesis methods that Hamtic flood hazard
+     analysis is limited or deferred due to no LiPAD coverage.
+
+  Technical documentation (Phil-LiDAR 1 Program reports on hydrological methodology)
+  must be cited in the thesis methods chapter before using these layers in analysis.
+
+required_for_stage: 2
 citation: >
-  DOST-Advanced Science and Technology Institute. GeoRisk Philippines flood hazard maps.
-  Retrieved from https://georisk.gov.ph/hazard-maps/ (access date to be recorded on download).
+  Phil-LiDAR 1 Program, DOST-Advanced Science and Technology Institute /
+  UP Training Center for Applied Geodesy and Photogrammetry (UP TCAGP) /
+  DREAM Program.  Flood hazard maps for San Jose de Buenavista and Sibalom,
+  Antique Province.  LiPAD — LiDAR Portal for Archiving and Distribution.
+  https://lipad-fmc.dream.upd.edu.ph  Published June 2017.
+  Retrieved (access date to be recorded on download under Phil-LiDAR 1 EULA).

@@ -1,0 +1,61 @@
+schema_version: "1.0"
+
+dataset_id: osm_philippines
+title: "OpenStreetMap Road Network Extract — Philippines National PBF"
+category: road_network
+
+description: >
+  OpenStreetMap (OSM) full national planet extract for the Philippines,
+  distributed by Geofabrik as a regularly updated PBF snapshot.  Used as the
+  base road network for evacuation-route modelling across all three study
+  municipalities: Sibalom (primary experiment), San Jose de Buenavista, and
+  Hamtic (both reduced-depth validation areas).
+
+  This is a Philippines-wide extract — NOT a San Jose de Buenavista-specific
+  clip.  Clipping to each municipality's bounding box (using osmium extract
+  or equivalent) is a Stage 3 preprocessing step.  Do not rename or
+  restructure the raw file; update local_path only after a verified derivative
+  clip has been produced.
+
+  Tag filtering to retain highway features only is also deferred to Stage 3
+  (osmium tags-filter or pyosmium).
+
+source_agency: "OpenStreetMap contributors via Geofabrik"
+source_url: "https://download.geofabrik.de/asia/philippines-latest.osm.pbf"
+landing_page_url: "https://download.geofabrik.de/asia/philippines.html"
+license_name: "Open Database License (ODbL) 1.0"
+license_url: "https://opendatacommons.org/licenses/odbl/1-0/"
+
+access_method: direct_download
+acquisition_status: acquired
+acquisition_date: "2026-08-22"
+
+temporal_coverage: "2026-08-21"   # Geofabrik snapshot last-modified 2026-08-21 22:31 UTC
+geographic_coverage: "Philippines — full national extract (not municipality-specific)"
+expected_format: pbf
+
+local_path: "raw/philippines-latest.osm.pbf"
+file_size_bytes: 604220753
+sha256: "ff0beab4be3582c38841e1b54398fe04885aa257d2dff45728f34c74d06053fe"
+crs: "EPSG:4326"
+
+provenance: observed
+validation_status: partially_validated
+validation_notes: >
+  Validation completed 2026-08-22:
+  1. OSMHeader signature: PASSED — b"OSMHeader" confirmed in first 32 bytes of file.
+  2. File size: 604,220,753 bytes (matches Content-Length from server).
+  3. Content validation (road/waterway features for Sibalom, San Jose de Buenavista,
+     and Hamtic municipalities): PENDING — requires osmium-tool or pyosmium (Stage 3
+     preprocessing).
+
+  Coverage note: this is a Philippines-wide extract, not municipality-specific.
+  The raw file must be retained as the immutable source.  Clipping to each study
+  municipality's bounding box is a Stage 3 preprocessing step.
+  Do not rename or restructure the raw file.
+
+required_for_stage: 1
+citation: >
+  OpenStreetMap contributors (various dates). OpenStreetMap data for Philippines.
+  Geofabrik GmbH download service. https://download.geofabrik.de/asia/philippines.html
+  Data licensed under the Open Database License (ODbL) 1.0.

@@ -1,0 +1,31 @@
+schema_version: "1.0"
+
+# Toy fixture — synthetic manifest for software tests only.
+# Used in test_acquire_dataset_direct_download_mocked to verify that the
+# CLI acquire-dataset command works for direct_download access_method datasets
+# without exercising the real manifest sha256 fields.
+
+dataset_id: test_direct_download
+title: "Test Direct Download Dataset — Fixture Only"
+category: road_network
+description: "Synthetic direct-download manifest fixture for unit tests."
+source_agency: "Test Source Agency"
+source_url: "http://example.test/data.csv"
+landing_page_url: null
+license_name: null
+license_url: null
+access_method: direct_download
+acquisition_status: not_requested
+acquisition_date: null
+temporal_coverage: null
+geographic_coverage: "Testville"
+expected_format: csv
+local_path: "raw/test_direct_download.csv"
+file_size_bytes: null
+sha256: null
+crs: null
+provenance: observed
+validation_status: not_validated
+validation_notes: null
+required_for_stage: 1
+citation: null

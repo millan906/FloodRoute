@@ -6,34 +6,68 @@ category: barangay_population
 
 description: >
   Barangay-level population counts from the 2020 Census of Population and
-  Housing (2020 CPH), tabulated for Region VI (Western Visayas), covering
-  Antique Province including San Jose de Buenavista municipality.
-  Used to spatialise evacuation demand at sub-municipal resolution.
+  Housing (2020 CPH), conducted as of May 1, 2020, tabulated for Region VI
+  (Western Visayas), covering Antique Province including San Jose de Buenavista
+  municipality (28 barangays, total population 65,140 per 2020 CPH results).
+  Used to spatialise evacuation demand at sub-municipal resolution; joined to
+  admin boundary polygons via 10-digit PSGC codes.
+
+  Acquisition instructions (manual — requires OpenStat navigation):
+    PSA OpenStat portal: https://openstat.psa.gov.ph/PXWeb/pxweb/en/DB/DB__2A__CPH/
+    1. Navigate to: Database > 2A (2020 CPH) > Population > Barangay level
+    2. Select Region: VI — Western Visayas (or filter to Antique Province)
+    3. Select all variables (population by sex, total)
+    4. Export table as Excel (.xlsx) — use "Download data" → "Excel"
+    5. Save to: data/raw/psa_barangay_population_2020_r06.xlsx
+    6. After placing the file, run: floodroute verify-dataset psa_barangay_population_2020_r06
+
+  Alternative: PSA 2020 CPH publication page at
+    https://psa.gov.ph/content/highlights-region-vi-western-visayas-population-2020-census-population-and-housing-2020-cph
+  may link to Excel tables for direct download without OpenStat navigation.
+
+  Note: PSA does not publish a stable direct-download URL for the barangay population
+  table. The OpenStat PX-Web interface provides interactive query and export.
+  PSADA (https://psada.psa.gov.ph/catalog/231) holds the Public Use File microdata
+  but requires registration and an access agreement letter to the National Statistician.
 
 source_agency: "Philippine Statistics Authority (PSA)"
-source_url: null           # Specific table URL varies by query; use landing page
-landing_page_url: "https://psa.gov.ph/census-population-and-housing/2020-cph"
-license_name: null         # Philippine open-data terms — to be confirmed
-license_url: null
+source_url: null           # No stable direct download URL; use OpenStat interactive export
+landing_page_url: "https://openstat.psa.gov.ph/PXWeb/pxweb/en/DB/DB__2A__CPH/"
+license_name: "Philippine Government Open Data"
+license_url: null          # No explicit CC license; attribution to PSA required
 
 access_method: manual_download
 acquisition_status: not_requested
 acquisition_date: null
 
-temporal_coverage: "2020"
-geographic_coverage: "Region VI — Western Visayas, Philippines"
-expected_format: null      # Likely Excel (.xlsx) or CSV from PSA OpenSTAT
+temporal_coverage: "2020"   # Reference date: May 1, 2020
+geographic_coverage: "Region VI — Western Visayas, Philippines (all barangays)"
+expected_format: excel
 
 local_path: "raw/psa_barangay_population_2020_r06.xlsx"
 file_size_bytes: null
 sha256: null
-crs: null                  # Tabular — no spatial CRS; join to admin boundaries
+crs: null                  # Tabular — no CRS; join to admin boundaries via PSGC
 
 provenance: observed
 validation_status: not_validated
-validation_notes: null
+validation_notes: >
+  After download, validate:
+  1. File opens as a valid XLSX (xl/workbook.xml present in ZIP).
+  2. Identify the sheet containing barangay-level data (typically named by
+     region or labelled "Table 1" / "Barangay").
+  3. Confirm required columns are present: PSGC code (10-digit), barangay name,
+     municipality name, province name, total population, male, female.
+  4. Confirm San Jose de Buenavista (PSGC 060613000) appears as municipality.
+  5. Confirm all 28 barangays of San Jose de Buenavista are present with
+     non-zero population counts.
+  6. Cross-reference total for San Jose de Buenavista against published
+     PSA figure of 65,140 (2020 CPH).
+  Do not transform or impute values — retain nulls for missing barangay records.
 
-required_for_stage: 1
+required_for_stage: 2
 citation: >
-  Philippine Statistics Authority. 2020 Census of Population and Housing (2020 CPH).
-  Retrieved from https://psa.gov.ph/census-population-and-housing/2020-cph
+  Philippine Statistics Authority (PSA). 2020 Census of Population and Housing
+  (2020 CPH), Region VI — Western Visayas, barangay-level population table.
+  Retrieved via PSA OpenStat (https://openstat.psa.gov.ph). Reference date:
+  May 1, 2020. Access date to be recorded on download.
