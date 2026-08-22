@@ -1,0 +1,29 @@
+schema_version: "1.0"
+
+# Toy fixture — synthetic manifest for software tests only.
+# Not representative of any real dataset or agency.
+
+dataset_id: test_valid_dataset
+title: "Test Dataset — Fixture Only"
+category: road_network
+description: "A complete, valid manifest used in unit tests."
+source_agency: "Test Source Agency"
+source_url: null
+landing_page_url: null
+license_name: null
+license_url: null
+access_method: direct_download
+acquisition_status: not_requested
+acquisition_date: null
+temporal_coverage: null
+geographic_coverage: "Testville"
+expected_format: csv
+local_path: "raw/test_valid_dataset.csv"
+file_size_bytes: null
+sha256: null
+crs: null
+provenance: observed
+validation_status: not_validated
+validation_notes: null
+required_for_stage: 1
+citation: null

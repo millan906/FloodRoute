@@ -1,0 +1,39 @@
+schema_version: "1.0"
+
+dataset_id: psa_administrative_boundaries_antique
+title: "PSA Administrative Boundaries — Antique Province, Philippines"
+category: administrative_boundaries
+
+description: >
+  Philippine Standard Geographic Code (PSGC) administrative boundary
+  polygons covering Antique Province (Region VI — Western Visayas),
+  including provincial, municipal, and barangay boundaries.
+  Provides the spatial frame for all demand and routing analyses.
+
+source_agency: "Philippine Statistics Authority (PSA)"
+source_url: null           # Direct shapefile URL not confirmed; use landing page
+landing_page_url: "https://psa.gov.ph/classification/psgc"
+license_name: null         # Philippine government open-data terms — to be confirmed
+license_url: null
+
+access_method: manual_download
+acquisition_status: not_requested
+acquisition_date: null
+
+temporal_coverage: null    # Reference year of boundary delineation not confirmed
+geographic_coverage: "Antique Province, Region VI, Philippines"
+expected_format: null      # Likely Shapefile or GeoJSON — to be confirmed on download
+
+local_path: "raw/psa_administrative_boundaries_antique.zip"
+file_size_bytes: null
+sha256: null
+crs: null                  # Likely EPSG:4326 (WGS 84) — confirm on download
+
+provenance: observed
+validation_status: not_validated
+validation_notes: null
+
+required_for_stage: 1
+citation: >
+  Philippine Statistics Authority. Philippine Standard Geographic Code (PSGC).
+  Retrieved from https://psa.gov.ph/classification/psgc

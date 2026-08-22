@@ -1,0 +1,43 @@
+schema_version: "1.0"
+
+dataset_id: osm_waterways_sjdb
+title: "OSM Waterways Layer — San Jose de Buenavista Study Area"
+category: waterways
+
+description: >
+  Waterway features (rivers, streams, canals) for the San Jose de Buenavista
+  study area, to be extracted from the OSM Philippines PBF using tag filtering
+  (natural=water, waterway=*). This dataset will be derived from
+  osm_san_jose_de_buenavista in Stage 2 and is not downloaded separately.
+  An authoritative source (DPWH drainage network or NAMRIA river data)
+  may supplement OSM in later stages.
+
+source_agency: "OpenStreetMap contributors (via osm_san_jose_de_buenavista extract)"
+source_url: null           # Derived from parent OSM extract; no independent URL
+landing_page_url: "https://download.geofabrik.de/asia/philippines.html"
+license_name: "Open Database License (ODbL) 1.0"
+license_url: "https://opendatacommons.org/licenses/odbl/1-0/"
+
+access_method: derived_later
+acquisition_status: not_requested
+acquisition_date: null
+
+temporal_coverage: null
+geographic_coverage: "San Jose de Buenavista, Antique, Philippines"
+expected_format: geojson   # Target format after extraction
+
+local_path: "interim/osm_waterways_sjdb.geojson"
+file_size_bytes: null
+sha256: null
+crs: "EPSG:4326"
+
+provenance: derived
+validation_status: not_validated
+validation_notes: >
+  Will be derived from osm_san_jose_de_buenavista in Stage 2.
+  Not available for download until the parent extract has been acquired.
+
+required_for_stage: 2
+citation: >
+  OpenStreetMap contributors. Waterway features extracted from Philippines OSM data.
+  Licensed under the Open Database License (ODbL) 1.0.

@@ -1,0 +1,45 @@
+schema_version: "1.0"
+
+dataset_id: sjdb_historical_flood_incidents
+title: "Historical Flood Incident Records — San Jose de Buenavista, Antique"
+category: historical_incidents
+
+description: >
+  Records of historical flood events affecting San Jose de Buenavista,
+  including road closures, evacuation centre activations, displacement counts,
+  and flood depth observations. Sources include NDRRMC Situation Reports,
+  MDRRMO incident logs, OCD Region VI records, and media archives.
+  Records must be entered into data/templates/historical_incidents_template.csv
+  after validation. No incident records are pre-populated; all values must be
+  sourced from official documentation or published situation reports.
+
+source_agency: "NDRRMC / MDRRMO San Jose de Buenavista / OCD Region VI"
+source_url: null           # NDRRMC situation reports: https://ndrrmc.gov.ph/
+landing_page_url: "https://ndrrmc.gov.ph/"
+license_name: null         # Philippine government publications — terms to be confirmed
+license_url: null
+
+access_method: formal_request
+acquisition_status: not_requested
+acquisition_date: null
+
+temporal_coverage: null    # Historical period to be determined (e.g., 2000–2024)
+geographic_coverage: "San Jose de Buenavista, Antique, Philippines"
+expected_format: csv
+
+local_path: "raw/sjdb_historical_flood_incidents.csv"
+file_size_bytes: null
+sha256: null
+crs: null                  # Tabular; point coordinates in EPSG:4326 where available
+
+provenance: observed
+validation_status: not_validated
+validation_notes: >
+  Incident records must be cross-referenced across at least two independent
+  sources before being classified as validated. Flood depth and road-closure
+  durations are often absent or approximate in LGU records — retain null
+  rather than estimating missing values.
+  Use data/templates/historical_incidents_template.csv for data entry.
+
+required_for_stage: 1
+citation: null             # To be populated after formal records are obtained
