@@ -1,0 +1,27 @@
+schema_version: "1.0"
+
+# Municipality configuration for the case-study area.
+# Unknown values are explicitly null — do not substitute invented defaults.
+
+municipality:
+  name: null                    # String: official municipality name
+  fips_code: null               # String: FIPS place code, e.g. "0612345"
+  state: null                   # String: two-letter state abbreviation
+  crs: null                     # String: EPSG code for the local projected CRS, e.g. "EPSG:3310"
+  area_km2:
+    value: null                 # Float: total area in km²
+    provenance: observed        # observed | derived | scenario_based
+    source: null                # Citation or dataset identifier
+  population:
+    value: null                 # Integer: total resident population
+    provenance: observed
+    source: null                # e.g. "ACS 2022 5-year estimate"
+    reference_year: null        # Integer: reference year of the estimate
+  bounding_box:
+    # WGS-84 decimal degrees; null until clipped from source data
+    min_lon: null
+    max_lon: null
+    min_lat: null
+    max_lat: null
+    provenance: derived
+    source: null

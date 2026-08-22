@@ -1,0 +1,62 @@
+schema_version: "1.0"
+
+# Flood hazard scenario definitions.
+# Each scenario describes a flood event parameterisation used to degrade the
+# road network and produce an inundation mask. All scenario parameters are
+# scenario_based unless linked to an observed or modelled flood extent.
+
+scenarios:
+  - id: "S0_BASELINE"
+    label: "No-flood baseline"
+    description: >
+      Full road network available; no inundation. Used to establish
+      un-degraded routing performance as a reference.
+    return_period_years: null   # Not applicable for baseline
+    inundation_depth_threshold_m:
+      value: null
+      provenance: scenario_based
+      source: null
+    flood_extent_source: null   # No flood extent for baseline
+    provenance: scenario_based
+    notes: "Baseline — no real flood data required."
+
+  - id: "S1_10YR"
+    label: "10-year return period flood"
+    description: >
+      Inundation corresponding to a 10-year return period event.
+      Road links with inundation depth >= threshold are removed.
+    return_period_years: 10
+    inundation_depth_threshold_m:
+      value: null               # To be set from literature or agency guidance
+      provenance: scenario_based
+      source: null
+    flood_extent_source: null   # Identifier from data_sources.yaml
+    provenance: scenario_based
+    notes: null
+
+  - id: "S2_100YR"
+    label: "100-year return period flood"
+    description: >
+      Inundation corresponding to a 100-year return period (1% annual chance).
+    return_period_years: 100
+    inundation_depth_threshold_m:
+      value: null
+      provenance: scenario_based
+      source: null
+    flood_extent_source: null
+    provenance: scenario_based
+    notes: null
+
+  - id: "S3_500YR"
+    label: "500-year return period flood"
+    description: >
+      Extreme-event scenario. Extent and depth may require extrapolation
+      beyond available observed data.
+    return_period_years: 500
+    inundation_depth_threshold_m:
+      value: null
+      provenance: scenario_based
+      source: null
+    flood_extent_source: null
+    provenance: scenario_based
+    notes: "Depth threshold likely extrapolated — flag uncertainty in results."

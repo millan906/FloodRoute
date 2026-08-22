@@ -1,0 +1,25 @@
+schema_version: "1.0"
+
+# Toy fixture — invalid provenance to test schema rejection.
+
+municipality:
+  name: "BadTown"
+  fips_code: null
+  state: null
+  crs: null
+  area_km2:
+    value: 10.0
+    provenance: guessed          # invalid — must be observed|derived|scenario_based
+    source: null
+  population:
+    value: null
+    provenance: null
+    source: null
+    reference_year: null
+  bounding_box:
+    min_lon: null
+    max_lon: null
+    min_lat: null
+    max_lat: null
+    provenance: null
+    source: null

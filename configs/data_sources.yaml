@@ -1,0 +1,50 @@
+schema_version: "1.0"
+
+# Registry of external data sources used in the case study.
+# Each entry describes where data comes from, its provenance, and its
+# expected local path once downloaded. Paths are relative to data/raw/.
+
+sources:
+  road_network:
+    description: "Street centreline network for the municipality"
+    provenance: observed
+    provider: null              # e.g. "OpenStreetMap", "Tiger/Line"
+    url: null
+    format: null                # e.g. "GeoJSON", "Shapefile"
+    raw_path: null              # Relative path under data/raw/
+    crs: null                   # Native CRS of the downloaded file
+    reference_date: null        # ISO-8601 date of the snapshot
+    checksum_sha256: null       # Populated after download
+
+  flood_extents:
+    description: "Flood inundation extents for each modelled return period"
+    provenance: null            # observed or scenario_based, depending on source
+    provider: null              # e.g. "FEMA NFHL", "NOAA", local agency
+    url: null
+    format: null
+    raw_path: null
+    crs: null
+    reference_date: null
+    checksum_sha256: null
+
+  population_grid:
+    description: "Gridded population estimates used to spatialise demand"
+    provenance: derived         # Typically derived from census + dasymetric model
+    provider: null
+    url: null
+    format: null
+    raw_path: null
+    crs: null
+    reference_year: null
+    checksum_sha256: null
+
+  shelter_registry:
+    description: "Official list of designated emergency shelters"
+    provenance: observed
+    provider: null
+    url: null
+    format: null
+    raw_path: null
+    crs: null
+    reference_date: null
+    checksum_sha256: null

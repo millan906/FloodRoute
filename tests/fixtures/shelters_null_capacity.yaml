@@ -1,0 +1,23 @@
+schema_version: "1.0"
+
+# Toy fixture — shelter with explicitly null capacity.
+# Tests that null capacity is accepted (not defaulted).
+
+shelters:
+  - id: "TEST_SHELTER_A"
+    name: "Test Shelter Alpha"
+    address: "1 Main St, Testville, CA"
+    lon: -122.25
+    lat: 37.75
+    crs: "EPSG:4326"
+    capacity:
+      value: null               # unknown — must remain null
+      provenance: null
+      source: null
+    accessible: true
+    operator: "Test Agency"
+    activation_lead_time_hours:
+      value: null
+      provenance: null
+      source: null
+    notes: "Fixture for null-capacity test."

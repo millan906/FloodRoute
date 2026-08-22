@@ -1,0 +1,47 @@
+schema_version: "1.0"
+
+# Shelter eligibility rules.
+# These rules govern which population segments may be routed to which shelters
+# and under which conditions. Rules are scenario-based unless sourced from
+# official emergency management policy documents.
+
+eligibility:
+  default_rule:
+    description: "Any resident within the evacuation zone may use any open shelter."
+    provenance: scenario_based
+    source: null                # Cite policy document when available
+
+  accessibility_requirement:
+    description: >
+      Residents with documented mobility limitations must be routed only to
+      shelters where accessible == true.
+    provenance: scenario_based
+    source: null
+
+  pet_friendly:
+    description: >
+      Residents with pets may only use shelters that accept animals.
+      No shelter in the current registry has confirmed pet-friendly status.
+    provenance: scenario_based
+    source: null
+    shelters_confirmed_pet_friendly: []   # Populated from shelter_registry
+
+  capacity_enforcement:
+    description: >
+      Shelter assignment must not exceed the declared capacity of any shelter.
+      When capacity is null the shelter is treated as uncapacitated for
+      modelling purposes and flagged in results.
+    provenance: scenario_based
+    source: null
+    treat_null_capacity_as_uncapacitated: true
+
+  geographic_constraint:
+    description: >
+      Residents are not required to use their geographically nearest shelter;
+      routing optimisation may assign any reachable shelter.
+    provenance: scenario_based
+    source: null
+    max_travel_time_minutes:
+      value: null               # null = no hard cut-off in Stage 0
+      provenance: scenario_based
+      source: null

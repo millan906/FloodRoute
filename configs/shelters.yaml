@@ -1,0 +1,27 @@
+schema_version: "1.0"
+
+# Shelter site definitions for the case-study municipality.
+# Each shelter entry must carry provenance for every measured attribute.
+# Unknown values are null — never invent a default capacity or location.
+
+shelters:
+  - id: "SHELTER_PLACEHOLDER_01"
+    name: null
+    address: null
+    lon: null                   # WGS-84 decimal degrees
+    lat: null                   # WGS-84 decimal degrees
+    crs: "EPSG:4326"            # CRS for lon/lat fields
+    capacity:
+      value: null               # Integer: maximum occupancy
+      provenance: null          # observed | derived | scenario_based
+      source: null
+    accessible: null            # Boolean: ADA-accessible?
+    operator: null              # String: operating agency or organisation
+    activation_lead_time_hours:
+      value: null               # Float: hours from alert to opening
+      provenance: null
+      source: null
+    notes: null
+
+# Add real shelter entries once the shelter_registry data source is ingested.
+# Do not populate values here with invented or representative numbers.

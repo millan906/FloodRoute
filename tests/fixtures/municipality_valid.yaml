@@ -1,0 +1,26 @@
+schema_version: "1.0"
+
+# Toy fixture — synthetic data for software tests only.
+# Not representative of any real municipality.
+
+municipality:
+  name: "Testville"
+  fips_code: "0600001"
+  state: "CA"
+  crs: "EPSG:3310"
+  area_km2:
+    value: 50.0
+    provenance: observed
+    source: "test-fixture"
+  population:
+    value: 10000
+    provenance: observed
+    source: "test-fixture"
+    reference_year: 2022
+  bounding_box:
+    min_lon: -122.5
+    max_lon: -122.0
+    min_lat: 37.5
+    max_lat: 38.0
+    provenance: derived
+    source: "test-fixture"

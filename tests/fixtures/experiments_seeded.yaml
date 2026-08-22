@@ -1,0 +1,16 @@
+schema_version: "1.0"
+
+# Toy fixture — experiment with deterministic seed.
+
+experiments:
+  - id: "TEST_EXP_SEED_42"
+    label: "Seed determinism test"
+    description: "Fixture to verify seed is loaded correctly."
+    scenario_id: "S1_10YR"
+    algorithm: null
+    demand_model: null
+    seed: 42
+    crs: null
+    parameters: {}
+    provenance: scenario_based
+    notes: "Test fixture only."

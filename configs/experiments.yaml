@@ -1,0 +1,22 @@
+schema_version: "1.0"
+
+# Experiment definitions.
+# An experiment is a named, reproducible combination of scenario, algorithm
+# settings, and random seed. Results are written to results/runs/<id>/.
+
+experiments:
+  - id: "EXP_PLACEHOLDER_01"
+    label: "Placeholder experiment — do not run in Stage 0"
+    description: >
+      This entry documents the intended experiment structure.
+      It must not be executed until the data layer (Stage 1+) is in place.
+    scenario_id: "S1_10YR"
+    algorithm: null             # e.g. "dijkstra", "a_star", "flow"
+    demand_model: null          # Identifier of the population demand model
+    seed: 42                    # Integer: global random seed for reproducibility
+    crs: null                   # Output CRS for result geometries
+    parameters: {}              # Algorithm-specific key-value pairs
+    provenance: scenario_based
+    notes: >
+      Stage 0 — no results will be generated. Populate scenario_id, algorithm,
+      and demand_model once corresponding modules are implemented.
