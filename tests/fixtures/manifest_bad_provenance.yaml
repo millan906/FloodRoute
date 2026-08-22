@@ -1,0 +1,11 @@
+schema_version: "1.0"
+
+# Toy fixture — invalid provenance value for rejection tests.
+
+dataset_id: test_bad_manifest_provenance
+title: "Test — Bad Provenance"
+category: road_network
+access_method: direct_download
+acquisition_status: not_requested
+provenance: guessed              # invalid — must be observed|derived|scenario_based
+validation_status: not_validated

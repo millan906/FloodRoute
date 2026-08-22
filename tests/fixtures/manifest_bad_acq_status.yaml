@@ -1,0 +1,11 @@
+schema_version: "1.0"
+
+# Toy fixture — invalid acquisition_status for rejection tests.
+
+dataset_id: test_bad_acq_status
+title: "Test — Bad Acquisition Status"
+category: road_network
+access_method: direct_download
+acquisition_status: downloaded   # invalid — not in the controlled enum
+provenance: observed
+validation_status: not_validated

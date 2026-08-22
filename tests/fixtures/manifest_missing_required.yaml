@@ -1,0 +1,10 @@
+schema_version: "1.0"
+
+# Toy fixture — dataset_id is intentionally absent to test required-field rejection.
+
+title: "Test — Missing dataset_id"
+category: road_network
+access_method: direct_download
+acquisition_status: not_requested
+provenance: observed
+validation_status: not_validated

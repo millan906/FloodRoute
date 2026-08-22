@@ -1,0 +1,11 @@
+schema_version: "1.0"
+
+# Toy fixture — invalid category value for rejection tests.
+
+dataset_id: test_bad_category
+title: "Test — Bad Category"
+category: invalid_category_xyz   # must fail validation
+access_method: direct_download
+acquisition_status: not_requested
+provenance: observed
+validation_status: not_validated

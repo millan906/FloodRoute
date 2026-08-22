@@ -1,0 +1,45 @@
+schema_version: "1.0"
+
+dataset_id: sjdb_evacuation_shelters
+title: "Evacuation Shelter Registry — San Jose de Buenavista, Antique"
+category: evacuation_shelters
+
+description: >
+  Official list of designated evacuation centres for San Jose de Buenavista
+  municipality, including facility name, location, capacity, operator, and
+  accessibility status. Primary source is the Municipal Disaster Risk Reduction
+  and Management Office (MDRRMO) of San Jose de Buenavista. Secondary sources
+  may include the Provincial DRRMO (Antique) and DSWD records.
+  Records must be entered into data/templates/evacuation_shelters_template.csv
+  after validation with the LGU. No facility records are pre-populated in this
+  manifest; all values in the template must be sourced from official documentation.
+
+source_agency: "MDRRMO — San Jose de Buenavista, Antique"
+source_url: null           # No public URL; records supplied by LGU
+landing_page_url: null
+license_name: null         # LGU data — data-sharing agreement required
+license_url: null
+
+access_method: local_authority
+acquisition_status: not_requested
+acquisition_date: null
+
+temporal_coverage: null    # Date of LGU shelter registry — to be confirmed
+geographic_coverage: "San Jose de Buenavista, Antique, Philippines"
+expected_format: csv
+
+local_path: "raw/sjdb_evacuation_shelters.csv"
+file_size_bytes: null
+sha256: null
+crs: "EPSG:4326"           # Coordinates in WGS 84 geographic (lat/lon)
+
+provenance: observed
+validation_status: not_validated
+validation_notes: >
+  All shelter records require validation against official MDRRMO documentation
+  before use in analysis. Capacity values, coordinates, and operational status
+  must be confirmed — do not infer or estimate missing values.
+  Use data/templates/evacuation_shelters_template.csv for data entry.
+
+required_for_stage: 1
+citation: null             # To be populated after LGU data sharing is formalised
