@@ -1,0 +1,85 @@
+schema_version: "1.0"
+
+dataset_id: phl_admin_boundaries
+title: "Philippines Administrative Boundaries — Barangay Level with PSGC Codes (HDX COD-AB)"
+category: administrative_boundaries
+
+description: >
+  Common Operational Dataset — Administrative Boundaries (COD-AB) for the Philippines,
+  produced by the United Nations Office for the Coordination of Humanitarian Affairs
+  (OCHA) in partnership with NAMRIA and the Philippine Statistics Authority (PSA).
+  Covers all administrative levels (admin0–admin4: country, region, province,
+  municipality/city, barangay) with PSGC-derived pcodes for all barangays.
+
+  Used to extract barangay-level polygons for all three study municipalities:
+    Sibalom            (adm3_pcode=PH0600616, 76 barangays)
+    San Jose (Capital) (adm3_pcode=PH0600613, 28 barangays)
+    Hamtic             (adm3_pcode=PH0600608, 47 barangays)
+
+  This is a Philippines-wide dataset — NOT specific to Antique Province.
+  Spatial subsetting to study municipalities is a Stage 3 preprocessing step.
+
+  Source note: PSA does not publish bulk GIS shapefiles from its own website.
+  The HDX COD-AB is the standard authoritative GIS product for Philippines boundaries,
+  maintained by OCHA with PSA/NAMRIA input and used by the Philippine government,
+  UN agencies, and international NGOs.  Boundaries are indicative (administrative),
+  not cadastral survey lines.
+
+  Acquisition instructions (direct download — no registration required):
+    Landing page : https://data.humdata.org/dataset/cod-ab-phl
+    Shapefile ZIP: https://data.humdata.org/dataset/caf116df-f984-4deb-85ca-41b349d3f313/resource/4e4067d6-3fc8-4d2c-91ea-330c3d4f8e8e/download/phl_admin_boundaries.shp.zip
+    After download, run: floodroute verify-dataset phl_admin_boundaries
+
+source_agency: "OCHA / NAMRIA / Philippine Statistics Authority"
+source_url: "https://data.humdata.org/dataset/caf116df-f984-4deb-85ca-41b349d3f313/resource/4e4067d6-3fc8-4d2c-91ea-330c3d4f8e8e/download/phl_admin_boundaries.shp.zip"
+landing_page_url: "https://data.humdata.org/dataset/cod-ab-phl"
+license_name: "Creative Commons Attribution for Intergovernmental Organisations (CC BY-IGO)"
+license_url: "https://data.humdata.org/faqs/licenses"
+
+access_method: direct_download
+acquisition_status: acquired
+acquisition_date: "2026-08-22"
+
+temporal_coverage: "2024"   # April 2024 review cycle; incorporates 10-digit PSGC
+geographic_coverage: "Philippines — all administrative levels (admin0–admin4)"
+expected_format: shapefile
+
+local_path: "raw/psa_administrative_boundaries_antique.zip"
+file_size_bytes: 928515157
+sha256: "6497ef01aea9439c1d457f73a23369767f7c4e649c6e67439cc88636c74e2a7e"
+crs: "EPSG:4326"
+
+provenance: observed
+validation_status: partially_validated
+validation_notes: >
+  Validation completed 2026-08-22:
+  1. ZIP integrity: PASSED — archive opens without error, no path-traversal entries.
+  2. Member count: 35 files confirmed (admin0–admin4 + adminlines + adminpoints).
+     phl_admin0.shp/dbf/prj/shx/cpg  — country
+     phl_admin1.shp/dbf/prj/shx/cpg  — region (17 regions)
+     phl_admin2.shp/dbf/prj/shx/cpg  — province (88 provinces)
+     phl_admin3.shp/dbf/prj/shx/cpg  — municipality/city (1,642 records)
+     phl_admin4.shp/dbf/prj/shx/cpg  — barangay (42,048 records in DBF)
+     phl_adminlines.shp/...           — admin boundary lines
+     phl_adminpoints.shp/...          — admin label points
+  3. Barangay-level shapefile: CONFIRMED — phl_admin4.shp present.
+  4. Field names verified from DBF header (2026-08-22, pure Python struct reader):
+     admin3 fields: adm3_name, adm3_pcode, adm2_name, adm2_pcode, adm1_name, ...
+     admin4 fields: adm4_name, adm4_pcode, adm3_name, adm3_pcode, adm2_name, ...
+     Note: field names are lowercase (adm3_pcode), not ADM3_PCODE as documented earlier.
+  5. Study municipality presence confirmed in phl_admin3.dbf (2026-08-22):
+     Sibalom            adm3_pcode=PH0600616  76 barangays confirmed in phl_admin4.dbf
+     San Jose (Capital) adm3_pcode=PH0600613  28 barangays confirmed in phl_admin4.dbf
+     Hamtic             adm3_pcode=PH0600608  47 barangays confirmed in phl_admin4.dbf
+  6. PSGC code format: 9-character with PH prefix (e.g. PH0600616), not the
+     10-digit numeric PSGC (060616000) used in census tables.  Use adm3_pcode
+     for all municipality-level spatial joins.
+  7. CRS from .prj: PENDING — confirm EPSG:4326 with ogrinfo in Stage 3.
+  Limitation: boundaries are indicative polygons, not survey-grade cadastral lines.
+
+required_for_stage: 2
+citation: >
+  United Nations Office for the Coordination of Humanitarian Affairs (OCHA).
+  Philippines Common Operational Dataset — Administrative Boundaries (COD-AB).
+  Humanitarian Data Exchange. https://data.humdata.org/dataset/cod-ab-phl
+  Retrieved 2026-08-22. License: CC BY-IGO. Data sourced from NAMRIA and PSA.

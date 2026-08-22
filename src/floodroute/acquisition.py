@@ -1,8 +1,10 @@
-"""Safe dataset acquisition utilities for FloodRoute Stage 1.
+"""Safe dataset acquisition utilities for FloodRoute.
 
 Provides checksum calculation, format-aware validation, and a controlled
 download workflow. Network access is explicit and opt-in — no bulk downloads.
 Downloaded content is never executed.
+
+Stage 2 additions: validate_pbf_file, validate_xlsx_file, validate_geotiff_file.
 """
 
 from __future__ import annotations
@@ -10,6 +12,7 @@ from __future__ import annotations
 import hashlib
 import shutil
 import urllib.request
+import xml.etree.ElementTree as ET
 import zipfile
 from pathlib import Path
 from typing import Any
@@ -276,6 +279,188 @@ def validate_zip_file(path: Path) -> dict[str, Any]:
     return {"valid": True, "member_count": len(members), "members": members}
 
 
+def validate_pbf_file(path: Path) -> dict[str, Any]:
+    """Validate an OSM PBF file: existence, minimum size, OSMHeader signature.
+
+    An OSM PBF starts with a 4-byte big-endian int32 (BlobHeader length),
+    followed immediately by a BlobHeader whose 'type' field is "OSMHeader".
+    Checking for the literal b"OSMHeader" in the first 32 bytes is a
+    reliable signature test without requiring a full protobuf parser.
+    """
+    if not path.exists():
+        return {"valid": False, "error": "File not found"}
+    size = path.stat().st_size
+    if size < 32:
+        return {"valid": False, "error": f"File too small to be a valid PBF ({size} bytes)"}
+    with path.open("rb") as fh:
+        header = fh.read(32)
+    if b"OSMHeader" not in header:
+        return {"valid": False, "error": "Missing OSMHeader signature — not a valid OSM PBF"}
+    return {"valid": True, "file_size_bytes": size}
+
+
+def validate_xlsx_file(path: Path) -> dict[str, Any]:
+    """Validate an Excel workbook: readable as OOXML ZIP, extract sheet names.
+
+    XLSX files are ZIP archives.  Sheet names live in xl/workbook.xml inside
+    a <sheets> element.  Parsing uses only stdlib (zipfile + xml.etree).
+    """
+    if not path.exists():
+        return {"valid": False, "error": "File not found"}
+    try:
+        with zipfile.ZipFile(path, "r") as zf:
+            names = zf.namelist()
+            if "xl/workbook.xml" not in names:
+                return {"valid": False, "error": "xl/workbook.xml missing — not a valid XLSX"}
+            wb_xml = zf.read("xl/workbook.xml")
+    except zipfile.BadZipFile as exc:
+        return {"valid": False, "error": f"Not a ZIP/XLSX file: {exc}"}
+
+    try:
+        root = ET.fromstring(wb_xml)
+        # Strip namespace for portable tag matching
+        ns = root.tag.partition("{")[2].partition("}")[0]
+        prefix = f"{{{ns}}}" if ns else ""
+        sheets_el = root.find(f"{prefix}sheets")
+        sheet_names = (
+            [el.get("name", "") for el in sheets_el.findall(f"{prefix}sheet")]
+            if sheets_el is not None
+            else []
+        )
+    except ET.ParseError as exc:
+        return {"valid": False, "error": f"Could not parse xl/workbook.xml: {exc}"}
+
+    return {
+        "valid": True,
+        "file_size_bytes": path.stat().st_size,
+        "sheet_names": sheet_names,
+        "sheet_count": len(sheet_names),
+    }
+
+
+# TIFF magic-byte sequences (little-endian, big-endian, BigTIFF variants)
+_TIFF_MAGIC: set[bytes] = {
+    b"II\x2a\x00",  # TIFF little-endian
+    b"MM\x00\x2a",  # TIFF big-endian
+    b"II\x2b\x00",  # BigTIFF little-endian
+    b"MM\x00\x2b",  # BigTIFF big-endian
+}
+
+
+def validate_geotiff_file(path: Path) -> dict[str, Any]:
+    """Validate a GeoTIFF: existence, minimum size, TIFF magic bytes.
+
+    Checks the first 4 bytes against the four known TIFF/BigTIFF magic
+    sequences.  Does not require GDAL; cannot verify projection metadata.
+    """
+    if not path.exists():
+        return {"valid": False, "error": "File not found"}
+    size = path.stat().st_size
+    if size < 4:
+        return {"valid": False, "error": f"File too small to be a valid TIFF ({size} bytes)"}
+    with path.open("rb") as fh:
+        magic = fh.read(4)
+    if magic not in _TIFF_MAGIC:
+        return {"valid": False, "error": f"Invalid TIFF magic bytes: {magic!r}"}
+    return {"valid": True, "file_size_bytes": size}
+
+
+def validate_geotiff_raster(
+    path: Path,
+    *,
+    expected_crs: str | None = None,
+    municipality_bbox: tuple[float, float, float, float] | None = None,
+) -> dict[str, Any]:
+    """Semantic GeoTIFF validation using rasterio.
+
+    Checks: TIFF magic, CRS, raster dimensions, bounds, nodata value, and
+    optionally whether the raster covers a municipality bounding box.
+
+    Args:
+        path: Path to the GeoTIFF file.
+        expected_crs: If given (e.g. 'EPSG:4326'), verify the file CRS matches.
+        municipality_bbox: (west, south, east, north) in WGS84 degrees.
+            If given, verify the raster bounds overlap this box.
+
+    Returns:
+        Dict with keys: valid (bool), and on success: crs, bounds (west, south,
+        east, north), width, height, count (band count), nodata, pixel_size_deg,
+        and optionally covers_municipality (bool).
+    """
+    # Magic-byte pre-check (no rasterio import needed for this gate)
+    magic_result = validate_geotiff_file(path)
+    if not magic_result["valid"]:
+        return magic_result
+
+    try:
+        import rasterio  # noqa: PLC0415
+        from rasterio.crs import CRS  # noqa: PLC0415
+    except ImportError:
+        return {
+            "valid": False,
+            "error": "rasterio is not installed; cannot perform semantic validation",
+        }
+
+    try:
+        with rasterio.open(path) as ds:
+            crs = ds.crs.to_epsg() if ds.crs else None
+            bounds = ds.bounds  # BoundingBox(left, bottom, right, top)
+            width, height = ds.width, ds.height
+            count = ds.count
+            nodata = ds.nodata
+            transform = ds.transform
+    except Exception as exc:
+        return {"valid": False, "error": f"rasterio failed to open file: {exc}"}
+
+    crs_str = f"EPSG:{crs}" if crs else "unknown"
+    if expected_crs is not None:
+        try:
+            expected = CRS.from_string(expected_crs)
+            actual = CRS.from_epsg(crs) if crs else None
+            if actual is None or not actual.equals(expected):
+                return {
+                    "valid": False,
+                    "error": f"CRS mismatch: expected {expected_crs}, got {crs_str}",
+                }
+        except Exception as exc:
+            return {"valid": False, "error": f"CRS comparison failed: {exc}"}
+
+    result: dict[str, Any] = {
+        "valid": True,
+        "file_size_bytes": path.stat().st_size,
+        "crs": crs_str,
+        "bounds": {
+            "west": bounds.left,
+            "south": bounds.bottom,
+            "east": bounds.right,
+            "north": bounds.top,
+        },
+        "width": width,
+        "height": height,
+        "band_count": count,
+        "nodata": nodata,
+        "pixel_size_deg": abs(transform.a),
+    }
+
+    if municipality_bbox is not None:
+        west, south, east, north = municipality_bbox
+        covers = (
+            bounds.left <= west
+            and bounds.right >= east
+            and bounds.bottom <= south
+            and bounds.top >= north
+        )
+        result["covers_municipality"] = covers
+        if not covers:
+            result["valid"] = False
+            result["error"] = (
+                f"Raster bounds {dict(result['bounds'])} do not fully cover "
+                f"municipality bbox (W={west}, S={south}, E={east}, N={north})"
+            )
+
+    return result
+
+
 def validate_file(manifest: DatasetManifest, data_dir: Path) -> dict[str, Any]:
     """Dispatch format-aware validation for the manifest's local file."""
     path = resolve_local_path(manifest, data_dir)
@@ -289,10 +474,16 @@ def validate_file(manifest: DatasetManifest, data_dir: Path) -> dict[str, Any]:
         return validate_csv_file(path, category=manifest.category.value)
     if fmt in ("zip", "shapefile"):
         return validate_zip_file(path)
+    if fmt == "pbf":
+        return validate_pbf_file(path)
+    if fmt in ("excel", "xlsx"):
+        return validate_xlsx_file(path)
+    if fmt in ("geotiff", "tiff"):
+        return validate_geotiff_file(path)
 
     size = path.stat().st_size
     return {
         "valid": True,
         "file_size_bytes": size,
-        "note": f"Format '{fmt}' — existence and size only in Stage 1.",
+        "note": f"Format '{fmt}' — existence and size only.",
     }

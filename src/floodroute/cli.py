@@ -23,7 +23,10 @@ app = typer.Typer(
 logger = get_logger("cli")
 
 # Default paths resolved relative to the installed package root.
-_PKG_ROOT = Path(__file__).parent.parent.parent
+# resolve() is required when the package is imported through a symlink
+# (e.g., .venv/site-packages/floodroute -> src/floodroute) so that
+# __file__ is de-symlinked before computing the project root.
+_PKG_ROOT = Path(__file__).resolve().parent.parent.parent
 _DEFAULT_CONFIGS = _PKG_ROOT / "configs"
 _DEFAULT_DATA = _PKG_ROOT / "data"
 _DEFAULT_MANIFESTS = _DEFAULT_DATA / "manifests"

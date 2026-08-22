@@ -101,7 +101,7 @@ def test_list_datasets_with_real_manifests():
     result = runner.invoke(app, ["list-datasets", "--manifests-dir", str(MANIFESTS_DIR)])
     assert result.exit_code == 0, result.output
     # Output should contain at least one dataset_id
-    assert "osm_san_jose_de_buenavista" in result.output or len(result.output) > 10
+    assert "osm_philippines" in result.output or len(result.output) > 10
 
 
 def test_list_datasets_json_output():
@@ -165,11 +165,22 @@ def test_acquire_dataset_manual_method_prints_instructions():
 
 
 def test_acquire_dataset_direct_download_mocked(tmp_path):
-    """direct_download dataset with mocked network succeeds."""
-    if not MANIFESTS_DIR.is_dir():
-        pytest.skip("data/manifests/ not found")
+    """direct_download dataset with mocked network succeeds.
 
-    data = b"mocked osm data"
+    Uses a synthetic manifest written to tmp_path so the test is not coupled
+    to sha256 values in the real dataset manifests (which now carry checksums
+    of the actual downloaded files).
+    """
+    manifests_dir = tmp_path / "manifests"
+    manifests_dir.mkdir()
+    (manifests_dir / "test_direct.yaml").write_text(
+        "schema_version: '1.0'\ndataset_id: test_direct\ntitle: T\n"
+        "category: road_network\naccess_method: direct_download\n"
+        "source_url: 'http://example.test/data.csv'\nlocal_path: 'raw/test.csv'\n"
+        "acquisition_status: not_requested\nprovenance: observed\n"
+        "validation_status: not_validated\n"
+    )
+    data = b"mocked road network data"
 
     def fake_stream(url, part, *, timeout):
         part.write_bytes(data)
@@ -179,9 +190,9 @@ def test_acquire_dataset_direct_download_mocked(tmp_path):
             app,
             [
                 "acquire-dataset",
-                "osm_san_jose_de_buenavista",
+                "test_direct",
                 "--manifests-dir",
-                str(MANIFESTS_DIR),
+                str(manifests_dir),
                 "--data-dir",
                 str(tmp_path),
             ],
@@ -203,7 +214,7 @@ def test_verify_dataset_missing_file_exits_nonzero(tmp_path):
         app,
         [
             "verify-dataset",
-            "osm_san_jose_de_buenavista",
+            "osm_philippines",
             "--manifests-dir",
             str(MANIFESTS_DIR),
             "--data-dir",
