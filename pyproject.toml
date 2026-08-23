@@ -20,6 +20,7 @@ dependencies = [
     "pyproj>=3.6",
     "geopandas>=0.14",
     "osmium>=4.3,<5",
+    "networkx>=3.3",
 ]
 
 [project.optional-dependencies]

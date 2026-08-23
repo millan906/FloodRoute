@@ -1133,20 +1133,377 @@ def validate_preprocessing_manifests_cmd(
 
 @app.command("build-graph")
 def build_graph(
+    data_dir: Annotated[
+        Path,
+        typer.Option("--data-dir", "-d", help="Path to the data/ directory."),
+    ] = _DEFAULT_DATA,
+    municipality: Annotated[
+        str | None,
+        typer.Option(
+            "--municipality",
+            "-m",
+            help="Process only this pcode (e.g. PH0600608). Default: all.",
+        ),
+    ] = None,
+    dry_run: Annotated[
+        bool,
+        typer.Option(
+            "--dry-run",
+            help="Validate inputs and report planned outputs; do not write files.",
+        ),
+    ] = False,
+    force: Annotated[
+        bool,
+        typer.Option("--force", help="Overwrite existing graph outputs."),
+    ] = False,
     log_level: Annotated[
         str,
         typer.Option("--log-level", help="Logging level."),
     ] = "INFO",
 ) -> None:
-    """Build the road-network graph from processed data (Stage 2+)."""
-    configure_logging(log_level)  # type: ignore[arg-type]
-    logger.warning("build-graph called but no processed data is available.")
-    typer.echo(
-        "ERROR: build-graph requires processed road-network data. "
-        "Complete Stage 1 data ingestion first.",
-        err=True,
+    """Build directed road-network graphs from Stage 3 road layers (Stage 4)."""
+    configure_logging(log_level)
+    logger.info("build-graph starting (dry_run=%s, force=%s)", dry_run, force)
+    typer.echo(f"[LIVE] build-graph — data_dir={data_dir}")
+
+    import geopandas as gpd
+
+    from floodroute.graph.build import GraphBuildError, build_road_graph
+    from floodroute.graph.config import GraphConfig
+    from floodroute.graph.io import write_edges_gpkg, write_graphml, write_nodes_gpkg
+    from floodroute.graph.manifest import (
+        build_graph_manifest,
+        compute_file_sha256,
+        write_graph_manifest,
     )
-    raise typer.Exit(code=1)
+    from floodroute.graph.validate import (
+        GraphValidationFailed,
+        compute_graph_stats,
+        validate_road_graph,
+    )
+    from floodroute.preprocessing.config import MUNICIPALITY_CODES, MUNICIPALITY_NAMES
+
+    cfg = GraphConfig().resolve(data_dir)
+    osm_dir = data_dir / "processed" / "osm"
+    admin_dir = data_dir / "processed" / "admin"
+    municipalities_gpkg = admin_dir / "municipalities_utm51n.gpkg"
+
+    # Verify prerequisites
+    if not osm_dir.is_dir():
+        typer.echo("ERROR: processed/osm/ not found. Run preprocess-geospatial first.", err=True)
+        raise typer.Exit(code=1)
+    if not municipalities_gpkg.exists():
+        typer.echo(
+            f"ERROR: {municipalities_gpkg} not found. Run preprocess-geospatial first.",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    pcodes = [municipality] if municipality else list(MUNICIPALITY_CODES)
+
+    # Validate pcode if provided
+    if municipality and municipality not in MUNICIPALITY_CODES:
+        typer.echo(
+            f"ERROR: Unknown municipality code '{municipality}'. Valid: {MUNICIPALITY_CODES}",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    # Check source files exist
+    missing = []
+    for pcode in pcodes:
+        gpkg = osm_dir / f"{pcode}_roads_utm51n.gpkg"
+        if not gpkg.exists():
+            missing.append(str(gpkg))
+    if missing:
+        typer.echo(
+            "ERROR: Missing Stage 3 road files:\n" + "\n".join(f"  {m}" for m in missing),
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    cfg.output_graph_dir.mkdir(parents=True, exist_ok=True)
+    cfg.graph_manifests_dir.mkdir(parents=True, exist_ok=True)
+
+    # Check output existence before dry-run
+    if not force and not dry_run:
+        existing = []
+        for pcode in pcodes:
+            for suffix in ("_graph.graphml", "_nodes.gpkg", "_edges.gpkg"):
+                p = cfg.output_graph_dir / f"{pcode}{suffix}"
+                if p.exists():
+                    existing.append(str(p))
+        if existing:
+            typer.echo(
+                "ERROR: Output files already exist (use --force to overwrite):\n"
+                + "\n".join(f"  {e}" for e in existing),
+                err=True,
+            )
+            raise typer.Exit(code=1)
+
+    if dry_run:
+        typer.echo("DRY RUN — inputs verified. Planned outputs:")
+        for pcode in pcodes:
+            for suffix in ("_graph.graphml", "_nodes.gpkg", "_edges.gpkg"):
+                typer.echo(f"  {cfg.output_graph_dir / f'{pcode}{suffix}'}")
+        typer.echo("build-graph DRY RUN complete — no files written.")
+        return
+
+    # Load municipality polygons
+    munis_gdf = gpd.read_file(municipalities_gpkg, layer="municipalities")
+
+    all_ok = True
+    output_count = 0
+
+    for pcode in pcodes:
+        name = MUNICIPALITY_NAMES.get(pcode, pcode)
+        typer.echo(f"\n[{pcode}] {name}")
+
+        roads_gpkg = osm_dir / f"{pcode}_roads_utm51n.gpkg"
+        typer.echo(f"  Loading roads: {roads_gpkg.name}")
+        roads_gdf = gpd.read_file(roads_gpkg, layer="roads")
+        typer.echo(f"  {len(roads_gdf)} road features, CRS={roads_gdf.crs.to_epsg()}")
+
+        # Get municipality polygon
+        muni_row = munis_gdf[munis_gdf["adm3_pcode"] == pcode]
+        muni_polygon = muni_row.geometry.iloc[0] if len(muni_row) > 0 else None
+
+        # Build graph
+        typer.echo("  Building road graph ...")
+        try:
+            G, build_stats = build_road_graph(
+                roads_gdf,
+                municipality_polygon=muni_polygon,
+                coord_precision=cfg.coord_precision,
+                bridge_grade_sep=cfg.bridge_grade_sep,
+                tunnel_grade_sep=cfg.tunnel_grade_sep,
+                oneway_forward=cfg.oneway_forward,
+                oneway_reverse=cfg.oneway_reverse,
+            )
+        except GraphBuildError as exc:
+            typer.echo(f"  ERROR building graph: {exc}", err=True)
+            all_ok = False
+            continue
+
+        typer.echo(f"  Graph: {G.number_of_nodes()} nodes, {G.number_of_edges()} edges")
+        bs = build_stats.to_dict()
+        typer.echo(
+            f"  Build stats: {bs['input_road_count']} roads, "
+            f"{bs['interior_nodes_added']} interior nodes, "
+            f"{bs['t_junction_splits_added']} T-junction splits, "
+            f"{bs['grade_sep_crossings_skipped']} grade-sep skipped"
+        )
+        typer.echo(
+            f"  Lengths: directed={bs['total_directed_edge_length_m'] / 1000:.2f} km, "
+            f"physical={bs['total_physical_segment_length_m'] / 1000:.2f} km"
+        )
+
+        # Validate
+        min_node_cov = 0.85
+        min_km_cov = 0.85
+        try:
+            graph_stats = validate_road_graph(
+                G,
+                min_largest_wcc_node_coverage=min_node_cov,
+                min_largest_wcc_physical_length_coverage=min_km_cov,
+            )
+            val_status = "passed"
+            typer.echo(
+                f"  Validation PASSED: WCC={graph_stats['weakly_connected_component_count']}, "
+                f"node-cov={graph_stats['largest_wcc_node_coverage']:.1%}, "
+                f"km-cov={graph_stats['largest_wcc_physical_length_coverage']:.1%}"
+            )
+        except GraphValidationFailed as exc:
+            typer.echo(f"  Validation FAILED: {exc}", err=True)
+            val_status = "failed"
+            all_ok = False
+
+        # Write outputs
+        graphml_path = cfg.output_graph_dir / f"{pcode}_graph.graphml"
+        nodes_path = cfg.output_graph_dir / f"{pcode}_nodes.gpkg"
+        edges_path = cfg.output_graph_dir / f"{pcode}_edges.gpkg"
+
+        write_graphml(G, graphml_path)
+        write_nodes_gpkg(G, nodes_path, crs=cfg.crs)
+        write_edges_gpkg(G, edges_path, crs=cfg.crs)
+        typer.echo(f"  Wrote: {graphml_path.name}, {nodes_path.name}, {edges_path.name}")
+        output_count += 3
+
+        # Compute source checksum
+        roads_sha256 = compute_file_sha256(roads_gpkg)
+
+        # Build and write manifest
+        parameters = {
+            "crs": cfg.crs,
+            "buffer_metres": cfg.buffer_metres,
+            "coord_precision_mm": 10 ** (3 - cfg.coord_precision),
+            "oneway_forward_values": sorted(cfg.oneway_forward),
+            "oneway_reverse_values": sorted(cfg.oneway_reverse),
+            "oneway_bidirectional_default": True,
+            "bridge_grade_sep_values": sorted(cfg.bridge_grade_sep),
+            "tunnel_grade_sep_values": sorted(cfg.tunnel_grade_sep),
+            "grade_sep_rule": (
+                "Interior geometric crossings between a bridge/tunnel way and any "
+                "other way do not produce shared nodes. Endpoint connections are "
+                "always preserved regardless of bridge/tunnel tags."
+            ),
+        }
+
+        manifest = build_graph_manifest(
+            municipality_code=pcode,
+            municipality_name=name,
+            source_roads_path=roads_gpkg,
+            source_roads_sha256=roads_sha256,
+            source_admin_path=municipalities_gpkg,
+            parameters=parameters,
+            build_stats=build_stats.to_dict(),
+            graph_stats=graph_stats if val_status == "passed" else compute_graph_stats(G),
+            validation_thresholds={
+                "min_largest_wcc_node_coverage": min_node_cov,
+                "min_largest_wcc_physical_length_coverage": min_km_cov,
+            },
+            output_graphml_path=graphml_path,
+            output_nodes_gpkg_path=nodes_path,
+            output_edges_gpkg_path=edges_path,
+            validation_status=val_status,
+        )
+        manifest_path = cfg.graph_manifests_dir / f"{pcode}_graph.json"
+        write_graph_manifest(manifest, manifest_path)
+        typer.echo(f"  Manifest: {manifest_path.name}")
+
+    typer.echo(f"\nOutputs written: {output_count}")
+    if all_ok:
+        typer.echo("build-graph Stage 4 complete.")
+    else:
+        typer.echo("build-graph PARTIAL — some municipalities failed.", err=True)
+        raise typer.Exit(code=1)
+
+
+# ---------------------------------------------------------------------------
+# inspect-graph  (Stage 4)
+# ---------------------------------------------------------------------------
+
+
+@app.command("inspect-graph")
+def inspect_graph_cmd(
+    data_dir: Annotated[
+        Path,
+        typer.Option("--data-dir", "-d", help="Path to the data/ directory."),
+    ] = _DEFAULT_DATA,
+    municipality: Annotated[
+        str | None,
+        typer.Option("--municipality", "-m", help="Inspect only this pcode."),
+    ] = None,
+    log_level: Annotated[
+        str,
+        typer.Option("--log-level", help="Logging level."),
+    ] = "INFO",
+) -> None:
+    """Report statistics for built road-network graphs."""
+    configure_logging(log_level)
+
+    from floodroute.graph.config import GraphConfig
+    from floodroute.graph.io import read_graphml
+    from floodroute.graph.validate import compute_graph_stats
+    from floodroute.preprocessing.config import MUNICIPALITY_CODES, MUNICIPALITY_NAMES
+
+    cfg = GraphConfig().resolve(data_dir)
+    pcodes = [municipality] if municipality else list(MUNICIPALITY_CODES)
+
+    for pcode in pcodes:
+        name = MUNICIPALITY_NAMES.get(pcode, pcode)
+        graphml_path = cfg.output_graph_dir / f"{pcode}_graph.graphml"
+        if not graphml_path.exists():
+            typer.echo(f"{pcode} ({name}): graph not found at {graphml_path}")
+            continue
+        G = read_graphml(graphml_path)
+        stats = compute_graph_stats(G)
+        typer.echo(f"\n{pcode} ({name})")
+        typer.echo(f"  Nodes:  {stats['node_count']}")
+        typer.echo(f"  Edges:  {stats['edge_count']}")
+        typer.echo(f"  Self-loops: {stats['self_loop_count']}")
+        typer.echo(f"  Parallel edge pairs: {stats['parallel_edge_pairs']}")
+        typer.echo(f"  Isolated nodes: {stats['isolated_node_count']}")
+        typer.echo(f"  Boundary nodes: {stats['boundary_node_count']}")
+        typer.echo(f"  WCC count: {stats['weakly_connected_component_count']}")
+        typer.echo(
+            f"  Largest WCC: {stats['largest_wcc_node_count']} nodes ({stats['largest_wcc_node_coverage']:.1%} of nodes)"
+        )
+        typer.echo(
+            f"  Largest WCC: {stats['largest_wcc_physical_segment_length_m'] / 1000:.2f} km ({stats['largest_wcc_physical_length_coverage']:.1%} of physical km)"
+        )
+        typer.echo(f"  SCC count (>1 node): {stats['strongly_connected_component_count']}")
+        typer.echo(
+            f"  Largest SCC: {stats['largest_scc_node_count']} nodes ({stats['largest_scc_node_coverage']:.1%})"
+        )
+        typer.echo(f"  Directed edge length: {stats['total_directed_edge_length_m'] / 1000:.2f} km")
+        typer.echo(
+            f"  Physical segment length: {stats['total_physical_segment_length_m'] / 1000:.2f} km"
+        )
+        typer.echo(
+            f"  Residual components: {stats['residual_component_count']} ({stats['residual_node_count']} nodes, {stats['residual_physical_length_m'] / 1000:.2f} km)"
+        )
+
+
+# ---------------------------------------------------------------------------
+# validate-graph  (Stage 4)
+# ---------------------------------------------------------------------------
+
+
+@app.command("validate-graph")
+def validate_graph_cmd(
+    data_dir: Annotated[
+        Path,
+        typer.Option("--data-dir", "-d", help="Path to the data/ directory."),
+    ] = _DEFAULT_DATA,
+    municipality: Annotated[
+        str | None,
+        typer.Option("--municipality", "-m", help="Validate only this pcode."),
+    ] = None,
+    log_level: Annotated[
+        str,
+        typer.Option("--log-level", help="Logging level."),
+    ] = "INFO",
+) -> None:
+    """Validate built road-network graphs against structural criteria."""
+    configure_logging(log_level)
+
+    from floodroute.graph.config import GraphConfig
+    from floodroute.graph.io import read_graphml
+    from floodroute.graph.validate import GraphValidationFailed, validate_road_graph
+    from floodroute.preprocessing.config import MUNICIPALITY_CODES, MUNICIPALITY_NAMES
+
+    cfg = GraphConfig().resolve(data_dir)
+    pcodes = [municipality] if municipality else list(MUNICIPALITY_CODES)
+    all_ok = True
+
+    for pcode in pcodes:
+        name = MUNICIPALITY_NAMES.get(pcode, pcode)
+        graphml_path = cfg.output_graph_dir / f"{pcode}_graph.graphml"
+        if not graphml_path.exists():
+            typer.echo(f"ERROR: {pcode} graph not found: {graphml_path}", err=True)
+            all_ok = False
+            continue
+        G = read_graphml(graphml_path)
+        try:
+            stats = validate_road_graph(
+                G,
+                min_largest_wcc_node_coverage=0.85,
+                min_largest_wcc_physical_length_coverage=0.85,
+            )
+            typer.echo(
+                f"{pcode} ({name}): VALID — {stats['node_count']} nodes, "
+                f"{stats['edge_count']} edges, "
+                f"node-cov={stats['largest_wcc_node_coverage']:.1%}, "
+                f"km-cov={stats['largest_wcc_physical_length_coverage']:.1%}"
+            )
+        except GraphValidationFailed as exc:
+            typer.echo(f"{pcode} ({name}): FAILED — {exc}", err=True)
+            all_ok = False
+
+    if not all_ok:
+        raise typer.Exit(code=1)
+    typer.echo("validate-graph: all graphs passed.")
 
 
 # ---------------------------------------------------------------------------

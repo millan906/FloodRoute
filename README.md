@@ -167,6 +167,81 @@ Stage 3 **only** converts raw inputs to analysis-ready layers.  It does **not**:
 
 ---
 
+## Stage 4: road-graph construction
+
+### Command
+
+```bash
+# Dry run (verify inputs, report planned outputs):
+floodroute build-graph --dry-run
+
+# Build graphs for all municipalities:
+floodroute build-graph
+
+# Build for one municipality:
+floodroute build-graph --municipality PH0600608
+
+# Inspect built graphs:
+floodroute inspect-graph
+
+# Validate built graphs:
+floodroute validate-graph
+```
+
+### Graph semantics
+
+- **Graph type**: `networkx.MultiDiGraph` — directed, allowing parallel edges
+- **Node**: a road junction or endpoint; each identified by integer ID
+- **Edge**: a road segment between two adjacent nodes, inheriting all OSM attributes from the parent way
+
+### Intersection algorithm
+
+- Way endpoints always become graph nodes.
+- Two ways that geometrically cross share an interior node **only when neither way is grade-separated** (i.e., neither has a bridge or tunnel tag).
+- Ways with `bridge` ∈ {yes, cantilever, viaduct, aqueduct, movable, trestle} or `tunnel` ∈ {yes, building_passage, culvert} do not form interior intersections with surface roads.
+
+### Oneway interpretation
+
+| `oneway` value | Edge direction |
+|---|---|
+| `yes`, `1`, `true` | Forward (start → end of OSM way geometry) |
+| `-1`, `reverse` | Reverse (end → start) |
+| `no`, `0`, `false`, `reversible`, `alternating` | Bidirectional |
+| absent / null / unrecognised | Bidirectional (conservative default) |
+
+Unknown values are never treated as restricted. The value from OSM is stored on the edge; no speed, capacity, passability, or congestion is inferred.
+
+### Limitations
+
+- Road hierarchy is preserved but not used for weighting (no fabricated travel costs).
+- Graph is not routable without external assumptions about traversal costs.
+- Flood hazard intersection is Stage 5 — not performed here.
+- `layer` tags are absent from Stage 3 output and are not used for grade separation.
+
+### Output structure
+
+```
+data/processed/graph/
+├── PH0600608_graph.graphml    # NetworkX GraphML — topology + attributes
+├── PH0600608_nodes.gpkg       # Point layer — node positions, on_boundary flag
+├── PH0600608_edges.gpkg       # LineString layer — edge geometries + attributes
+├── PH0600613_graph.graphml
+├── ...
+data/processed/graph_manifests/
+├── PH0600608_graph.json       # Source checksums, parameters, stats, validation
+├── ...
+```
+
+### Stage 4 scope boundary
+
+Stage 4 **only** builds the topological road graph. It does **not**:
+- Intersect the graph with flood hazard data
+- Calculate inundation depth, travel costs, or passability
+- Generate routing results or shelter assignments
+- Assign demand or capacity values
+
+---
+
 ## Data categories
 
 | Directory | Contents | Git-tracked? |
