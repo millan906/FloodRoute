@@ -3,11 +3,16 @@
 Stage 0: validate-config is fully operational.
 Stage 1: list-datasets, validate-manifests, acquire-dataset, verify-dataset.
 Stage 3: preprocess-geospatial — converts verified raw inputs to analysis-ready layers.
+Stage 4: build-graph, inspect-graph, validate-graph.
+Stage 5: inspect-hazard (Phase A readiness gate).
+         acquire-hazard: download JRC GloFAS v2.1 Sibalom subset from Earth Engine.
+         (Phase B commands activate only when Phase A returns READY.)
 Later commands exit with a clear error until their data dependencies exist.
 """
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -1554,6 +1559,591 @@ def run_experiment(
         err=True,
     )
     raise typer.Exit(code=1)
+
+
+# ---------------------------------------------------------------------------
+# Stage 5 — hazard commands
+# ---------------------------------------------------------------------------
+
+_DEFAULT_JRC_RAW = _DEFAULT_DATA / "raw" / "jrc_glofas_flood_hazard"
+_DEFAULT_JRC_RASTER = _DEFAULT_JRC_RAW / "sibalom_jrc_glofas_v21_raw.tif"
+_DEFAULT_HAZARD_OUT = _DEFAULT_DATA / "processed" / "hazard"
+_GEE_PROJECT_ENV = "GEE_PROJECT"
+_GEE_PROJECT_DEFAULT = "geo-analyzer-web"
+
+
+def _get_gee_project(gee_project: str | None) -> str:
+    """Return GEE project from argument, env var, or documented default."""
+    if gee_project:
+        return gee_project
+    env = os.environ.get(_GEE_PROJECT_ENV)
+    if env:
+        return env
+    return _GEE_PROJECT_DEFAULT
+
+
+@app.command("acquire-hazard")
+def acquire_hazard(
+    gee_project: Annotated[
+        str | None,
+        typer.Option(
+            "--gee-project",
+            help=f"Google Earth Engine Cloud project ID. "
+            f"Can also be set via ${_GEE_PROJECT_ENV} env var. "
+            f"Default: {_GEE_PROJECT_DEFAULT}",
+        ),
+    ] = None,
+    output_dir: Annotated[
+        Path,
+        typer.Option("--output-dir", help="Directory for the raw JRC raster."),
+    ] = _DEFAULT_JRC_RAW,
+    admin_zip: Annotated[
+        Path,
+        typer.Option("--admin-zip", help="PSA admin boundaries ZIP."),
+    ] = _DEFAULT_DATA / "raw" / "psa_administrative_boundaries_antique.zip",
+    force: Annotated[
+        bool,
+        typer.Option("--force/--no-force", help="Overwrite existing raster."),
+    ] = False,
+    log_level: Annotated[
+        str,
+        typer.Option("--log-level", help="Logging level."),
+    ] = "INFO",
+) -> None:
+    """Download the JRC GloFAS v2.1 Sibalom subset from Google Earth Engine.
+
+    Acquires the minimum spatial subset (Sibalom municipality + 0.05° buffer) and
+    the five required bands: RP10_depth, RP20_depth, RP100_depth,
+    permanent_water_class, spurious_depth_category.
+
+    The GEE project must be authenticated before running this command.
+    Run: earthengine authenticate
+    """
+    configure_logging(log_level)  # type: ignore[arg-type]
+    project = _get_gee_project(gee_project)
+    out_path = output_dir / "sibalom_jrc_glofas_v21_raw.tif"
+
+    logger.info("acquire-hazard: project=%s, output=%s, force=%s", project, out_path, force)
+    typer.echo(f"[acquire-hazard] GEE project: {project}")
+
+    if not admin_zip.exists():
+        typer.echo(f"ERROR: admin ZIP not found: {admin_zip}", err=True)
+        raise typer.Exit(code=1)
+
+    from floodroute.hazard.jrc import acquire_sibalom_subset  # noqa: PLC0415
+
+    try:
+        path, sha256 = acquire_sibalom_subset(
+            out_path,
+            ee_project=project,
+            admin_zip=admin_zip,
+            force=force,
+        )
+        typer.echo(f"Saved: {path}")
+        typer.echo(f"SHA-256: {sha256}")
+        typer.echo(f"Size: {path.stat().st_size:,} bytes")
+    except FileExistsError as exc:
+        typer.echo(f"ERROR: {exc}. Use --force to overwrite.", err=True)
+        raise typer.Exit(code=1) from exc
+    except RuntimeError as exc:
+        typer.echo(f"ERROR: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+
+@app.command("inspect-hazard")
+def inspect_hazard(
+    raster_path: Annotated[
+        Path,
+        typer.Option("--raster", help="Path to the acquired JRC raw GeoTIFF."),
+    ] = _DEFAULT_JRC_RASTER,
+    admin_zip: Annotated[
+        Path,
+        typer.Option("--admin-zip", help="PSA admin boundaries ZIP."),
+    ] = _DEFAULT_DATA / "raw" / "psa_administrative_boundaries_antique.zip",
+    edges_gpkg: Annotated[
+        Path | None,
+        typer.Option("--edges-gpkg", help="Stage 4 edges GeoPackage for road intersection stats."),
+    ] = None,
+    log_level: Annotated[
+        str,
+        typer.Option("--log-level", help="Logging level."),
+    ] = "INFO",
+) -> None:
+    """Run Phase A hazard-readiness inspection for Sibalom.
+
+    Validates the JRC GloFAS v2.1 raster and reports:
+    - CRS, resolution, bounds
+    - Valid and nodata pixel counts per return period
+    - Flooded pixel statistics
+    - Monotonicity checks
+    - Permanent water and spurious depth flags
+    - Road graph intersection (if --edges-gpkg supplied)
+    - Phase A readiness decision: READY / PARTIAL / BLOCKED
+    """
+    configure_logging(log_level)  # type: ignore[arg-type]
+    logger.info("inspect-hazard: raster=%s", raster_path)
+
+    if not raster_path.exists():
+        typer.echo(
+            f"ERROR: JRC raster not found: {raster_path}\nRun: floodroute acquire-hazard",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    if not admin_zip.exists():
+        typer.echo(f"ERROR: admin ZIP not found: {admin_zip}", err=True)
+        raise typer.Exit(code=1)
+
+    edges_path: Path | None = edges_gpkg
+    if edges_path is None:
+        default_edges = _DEFAULT_DATA / "processed" / "graph" / "PH0600616_edges.gpkg"
+        if default_edges.exists():
+            edges_path = default_edges
+
+    from floodroute.hazard.jrc import ReadinessDecision, run_phase_a  # noqa: PLC0415
+
+    # Auto-discover default cat raster alongside depth raster
+    cat_path = raster_path.parent / raster_path.name.replace("_raw.tif", "_categories.tif")
+
+    result = run_phase_a(
+        raster_path,
+        admin_zip=admin_zip,
+        cat_path=cat_path if cat_path.exists() else None,
+        edges_path=edges_path,
+        municipality_pcode="PH0600616",
+    )
+
+    typer.echo("\nJRC GloFAS v2.1 — Phase A Readiness Report")
+    typer.echo(f"Municipality: {result.municipality_code}")
+    typer.echo(f"Raster: {result.raster_path.name}")
+    typer.echo(f"SHA-256: {result.sha256}")
+    typer.echo(f"CRS: {result.raster_crs}  Pixel: ~{result.pixel_size_m_approx} m")
+    typer.echo(f"Bounds (W/S/E/N): {result.raster_bounds}")
+
+    typer.echo("\n--- Pixel categories (three-state, non-permanent only) ---")
+    for rp, pc in result.pixel_cats.items():
+        typer.echo(
+            f"  {rp}: outside_domain={pc.outside_domain:,}  "
+            f"modelled_dry={pc.modelled_dry:,}  "
+            f"flooded={pc.flooded:,}  "
+            f"non_permanent={pc.non_permanent:,}  "
+            f"perm_water={pc.permanent_water:,}"
+        )
+
+    typer.echo(
+        f"\nMonotonicity: RP10≤RP20 violations={result.monotonicity_violations_rp10_rp20}, "
+        f"RP20≤RP100 violations={result.monotonicity_violations_rp20_rp100}"
+    )
+    typer.echo(f"LiPAD: {result.lipad_notes}")
+
+    if result.road_exposure:
+        typer.echo("\n--- Road exposure (interior overlap ≥ 5 m, non-permanent) ---")
+        for rp, re in result.road_exposure.items():
+            typer.echo(
+                f"  {rp}: exposed_normal={re.exposed_normal_segments} segs "
+                f"({re.exposed_normal_overlap_km:.3f} km)  "
+                f"Low={re.low_segments} Med={re.medium_segments} High={re.high_segments}"
+            )
+
+    typer.echo(f"\n{'=' * 60}")
+    decision_sym = {"READY": "✓", "PARTIAL": "~", "BLOCKED": "✗"}.get(result.decision.value, "?")
+    typer.echo(f"PHASE A DECISION: [{decision_sym}] {result.decision.value}")
+    for r in result.reasons:
+        typer.echo(f"  - {r}")
+
+    if result.decision != ReadinessDecision.READY:
+        typer.echo("\nPhase B integration will NOT run for this municipality.")
+        typer.echo(
+            "See data/manifests/jrc_glofas_flood_hazard_v21.yaml "
+            "and data/processed/hazard/ for per-municipality readiness reports."
+        )
+
+    typer.echo("")
+
+
+# ---------------------------------------------------------------------------
+# Stage 5B — hazard integration / validation / summary
+# ---------------------------------------------------------------------------
+
+_DEFAULT_GRAPH = _DEFAULT_DATA / "processed" / "graph"
+_DEFAULT_HAZARD_EDGES = _DEFAULT_GRAPH / "PH0600613_edges.gpkg"
+_DEFAULT_HAZARD_GRAPH = _DEFAULT_GRAPH / "PH0600613_graph.graphml"
+_DEFAULT_JRC_DEPTH_613 = _DEFAULT_JRC_RAW / "ph0600613_jrc_glofas_v21_raw.tif"
+_DEFAULT_JRC_CAT_613 = _DEFAULT_JRC_RAW / "ph0600613_jrc_glofas_v21_categories.tif"
+_DEFAULT_DEM_613 = _DEFAULT_DATA / "processed" / "dem" / "PH0600613_dem_utm51n.tif"
+_DEFAULT_WW_613 = _DEFAULT_DATA / "processed" / "osm" / "PH0600613_waterways_utm51n.gpkg"
+
+
+@app.command("integrate-hazard")
+def integrate_hazard(
+    graph_path: Annotated[
+        Path,
+        typer.Option("--graph", help="Stage 4 GraphML (EPSG:32651)."),
+    ] = _DEFAULT_HAZARD_GRAPH,
+    edges_gpkg: Annotated[
+        Path,
+        typer.Option("--edges-gpkg", help="Stage 4 edges GeoPackage."),
+    ] = _DEFAULT_HAZARD_EDGES,
+    depth_raster: Annotated[
+        Path,
+        typer.Option("--depth-raster", help="5-band JRC depth GeoTIFF."),
+    ] = _DEFAULT_JRC_DEPTH_613,
+    cat_raster: Annotated[
+        Path,
+        typer.Option("--cat-raster", help="4-band JRC category GeoTIFF."),
+    ] = _DEFAULT_JRC_CAT_613,
+    dem_path: Annotated[
+        Path | None,
+        typer.Option("--dem", help="Copernicus DEM GeoTIFF (EPSG:32651, optional)."),
+    ] = None,
+    waterway_path: Annotated[
+        Path | None,
+        typer.Option("--waterways", help="OSM waterway GeoPackage (EPSG:32651, optional)."),
+    ] = None,
+    output_dir: Annotated[
+        Path,
+        typer.Option("--output-dir", help="Directory for enriched GraphML + GeoPackage."),
+    ] = _DEFAULT_HAZARD_OUT,
+    force: Annotated[
+        bool,
+        typer.Option("--force/--no-force", help="Overwrite existing outputs."),
+    ] = False,
+    log_level: Annotated[
+        str,
+        typer.Option("--log-level", help="Logging level."),
+    ] = "INFO",
+) -> None:
+    """Run Stage 5B: attribute PH0600613 road graph with JRC flood, terrain and waterway evidence.
+
+    Produces:
+      PH0600613_phase_b_enriched.graphml  — topology + all Phase B attributes
+      PH0600613_phase_b_enriched.gpkg     — geometry + all Phase B attributes
+
+    Phase B is only permitted for PH0600613 (San Jose de Buenavista, READY).
+    Sibalom (PH0600616) is BLOCKED; Hamtic (PH0600608) is PARTIAL.
+    """
+    configure_logging(log_level)  # type: ignore[arg-type]
+
+    # Auto-use defaults for optional layers if files exist
+    _dem = dem_path or (_DEFAULT_DEM_613 if _DEFAULT_DEM_613.exists() else None)
+    _ww = waterway_path or (_DEFAULT_WW_613 if _DEFAULT_WW_613.exists() else None)
+
+    for label, p in [
+        ("graph", graph_path),
+        ("edges-gpkg", edges_gpkg),
+        ("depth-raster", depth_raster),
+        ("cat-raster", cat_raster),
+    ]:
+        if not p.exists():
+            typer.echo(f"ERROR: {label} not found: {p}", err=True)
+            raise typer.Exit(code=1)
+
+    from floodroute.hazard.phase_b import run_phase_b  # noqa: PLC0415
+
+    try:
+        result = run_phase_b(
+            graph_path,
+            edges_gpkg,
+            depth_raster,
+            cat_raster,
+            dem_path=_dem,
+            waterway_path=_ww,
+            output_dir=output_dir,
+            force=force,
+        )
+    except FileExistsError as exc:
+        typer.echo(f"ERROR: {exc}. Use --force to overwrite.", err=True)
+        raise typer.Exit(code=1) from exc
+    except ValueError as exc:
+        typer.echo(f"ERROR: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    typer.echo("\nStage 5B — Phase B Integration Complete")
+    typer.echo(f"Municipality:        {result.municipality_code}")
+    typer.echo(f"Directed edges:      {result.n_directed_edges:,}")
+    typer.echo(f"Physical segments:   {result.n_physical_segments:,}")
+    typer.echo("")
+    typer.echo("Exposure (directed edges / physical segments):")
+    typer.echo(
+        f"  RP10:  {result.n_exposed_dir_rp10:,} dir ({result.total_exposed_dir_m_rp10:.1f} m)"
+        f"  /  {result.n_exposed_phys_rp10:,} phys ({result.total_exposed_phys_m_rp10:.1f} m)"
+    )
+    typer.echo(
+        f"  RP20:  {result.n_exposed_dir_rp20:,} dir ({result.total_exposed_dir_m_rp20:.1f} m)"
+        f"  /  {result.n_exposed_phys_rp20:,} phys ({result.total_exposed_phys_m_rp20:.1f} m)"
+    )
+    typer.echo(
+        f"  RP100: {result.n_exposed_dir_rp100:,} dir ({result.total_exposed_dir_m_rp100:.1f} m)"
+        f"  /  {result.n_exposed_phys_rp100:,} phys ({result.total_exposed_phys_m_rp100:.1f} m)"
+    )
+    typer.echo(f"Waterway crossings:  {result.n_waterway_crossings:,}")
+    typer.echo(f"\nEnriched GraphML: {result.output_graphml}")
+    typer.echo(f"  SHA-256: {result.sha256_graphml}")
+    typer.echo(f"Enriched GPKG:    {result.output_gpkg}")
+    typer.echo(f"  SHA-256: {result.sha256_gpkg}")
+    typer.echo("")
+
+
+@app.command("validate-hazard")
+def validate_hazard(
+    enriched_gpkg: Annotated[
+        Path,
+        typer.Option("--gpkg", help="Phase B enriched GeoPackage to validate."),
+    ] = _DEFAULT_HAZARD_OUT / "PH0600613_phase_b_enriched.gpkg",
+    log_level: Annotated[
+        str,
+        typer.Option("--log-level", help="Logging level."),
+    ] = "INFO",
+) -> None:
+    """Validate Phase B enriched GeoPackage: check required columns, value ranges and consistency.
+
+    Exit code 0 if all checks pass; 1 if any validation fails.
+    """
+    configure_logging(log_level)  # type: ignore[arg-type]
+
+    if not enriched_gpkg.exists():
+        typer.echo(f"ERROR: enriched GeoPackage not found: {enriched_gpkg}", err=True)
+        typer.echo("Run: floodroute integrate-hazard", err=True)
+        raise typer.Exit(code=1)
+
+    import geopandas as gpd  # noqa: PLC0415
+
+    gdf = gpd.read_file(enriched_gpkg, layer="edges")
+    n = len(gdf)
+    failures: list[str] = []
+
+    # Required Phase B columns
+    jrc_cols = [
+        f"jrc_{rp}_{attr}"
+        for rp in ("rp10", "rp20", "rp100")
+        for attr in (
+            "status",
+            "depth_max_m",
+            "depth_wt_mean_m",
+            "exposed_m",
+            "exposed_pct",
+            "perm_water_m",
+            "spurious",
+            "sample_n",
+        )
+    ]
+    terrain_cols = [
+        "terrain_elev_min_m",
+        "terrain_elev_mean_m",
+        "terrain_elev_max_m",
+        "terrain_elev_change_m",
+        "terrain_slope_pct",
+    ]
+    waterway_cols = [
+        "waterway_nearest_dist_m",
+        "waterway_crossing",
+        "waterway_nearest_name",
+        "waterway_nearest_type",
+    ]
+    network_cols = ["network_wcc_id"]
+
+    required = jrc_cols + terrain_cols + waterway_cols + network_cols
+    missing = [c for c in required if c not in gdf.columns]
+    if missing:
+        failures.append(f"Missing columns: {missing}")
+
+    if not missing:
+        # Valid status values
+        valid_statuses = {"no_overlap", "outside_domain", "modelled_dry", "flooded"}
+        for rp in ("rp10", "rp20", "rp100"):
+            col = f"jrc_{rp}_status"
+            bad = gdf[~gdf[col].isin(valid_statuses)][col].unique()
+            if len(bad):
+                failures.append(f"{col} has invalid values: {bad}")
+
+        # exposed_m must be >= 0
+        for rp in ("rp10", "rp20", "rp100"):
+            col = f"jrc_{rp}_exposed_m"
+            if (gdf[col].dropna() < 0).any():
+                failures.append(f"{col} has negative values")
+
+        # exposed_pct must be in [0, 100]
+        for rp in ("rp10", "rp20", "rp100"):
+            col = f"jrc_{rp}_exposed_pct"
+            if (gdf[col].dropna() > 100.01).any():
+                failures.append(f"{col} exceeds 100%")
+
+        # Monotonicity: RP10 exposed ≤ RP100 exposed (not always true per edge, skip)
+
+        # Terrain slopes must be ≥ 0
+        if (gdf["terrain_slope_pct"].dropna() < 0).any():
+            failures.append("terrain_slope_pct has negative values")
+
+        # WCC ids must be >= 0 or -1 (isolated)
+        if (gdf["network_wcc_id"].dropna() < -1).any():
+            failures.append("network_wcc_id has values below -1")
+
+        # Paired-edge consistency: for each (osm_id, edge_seq), both directions
+        # should have the same jrc_rp10_exposed_m
+        for rp in ("rp10", "rp100"):
+            col = f"jrc_{rp}_exposed_m"
+            grp = gdf.groupby(["osm_id", "edge_seq"])[col].agg(["min", "max"])
+            inconsistent = grp[(grp["max"] - grp["min"]).abs() > 0.01]
+            if len(inconsistent) > 0:
+                failures.append(
+                    f"{col}: {len(inconsistent)} physical segments have inconsistent "
+                    f"values across directed-edge pairs (max diff > 0.01 m)"
+                )
+
+    typer.echo(f"\nPhase B Validation — {enriched_gpkg.name}")
+    typer.echo(f"Edges: {n:,}  Columns checked: {len(required)}")
+
+    if failures:
+        typer.echo(f"\nFAILED ({len(failures)} issues):", err=True)
+        for f in failures:
+            typer.echo(f"  ✗ {f}", err=True)
+        raise typer.Exit(code=1)
+    else:
+        typer.echo(f"\nPASSED — all {len(required)} column checks satisfied.")
+        typer.echo("")
+
+
+@app.command("hazard-summary")
+def hazard_summary(
+    enriched_gpkg: Annotated[
+        Path,
+        typer.Option("--gpkg", help="Phase B enriched GeoPackage."),
+    ] = _DEFAULT_HAZARD_OUT / "PH0600613_phase_b_enriched.gpkg",
+    log_level: Annotated[
+        str,
+        typer.Option("--log-level", help="Logging level."),
+    ] = "INFO",
+) -> None:
+    """Print an exposure summary for the Phase B enriched graph.
+
+    Reports per-RP counts and lengths of exposed road segments, depth class
+    breakdown, waterway crossings, terrain statistics, and WCC coverage.
+    Does NOT infer passability or routing decisions.
+    """
+    configure_logging(log_level)  # type: ignore[arg-type]
+
+    if not enriched_gpkg.exists():
+        typer.echo(f"ERROR: enriched GeoPackage not found: {enriched_gpkg}", err=True)
+        typer.echo("Run: floodroute integrate-hazard", err=True)
+        raise typer.Exit(code=1)
+
+    import geopandas as gpd  # noqa: PLC0415
+
+    gdf = gpd.read_file(enriched_gpkg, layer="edges")
+    n_total = len(gdf)
+
+    typer.echo(f"\n{'=' * 65}")
+    typer.echo("Stage 5B Exposure Summary — PH0600613 San Jose de Buenavista")
+    typer.echo(f"{'=' * 65}")
+    typer.echo(f"Total directed edges : {n_total:,}")
+
+    # Deduplicate to physical segments
+    if "osm_id" in gdf.columns and "edge_seq" in gdf.columns:
+        phys = gdf.drop_duplicates(subset=["osm_id", "edge_seq"])
+        total_km = phys["length_m"].sum() / 1000
+        typer.echo(f"Physical segments    : {len(phys):,}  ({total_km:.1f} km)")
+
+    # Deduplicate to physical segments for the summary tables
+    if "osm_id" in gdf.columns and "edge_seq" in gdf.columns:
+        phys = gdf.drop_duplicates(subset=["osm_id", "edge_seq"])
+        total_phys_km = phys["length_m"].sum() / 1000
+    else:
+        phys = gdf
+        total_phys_km = total_km
+
+    typer.echo("")
+    typer.echo("JRC Flood Evidence (non-permanent over-bank inundation):")
+    typer.echo("  Directed edges (both directions counted):")
+    typer.echo(
+        f"  {'Return Period':<10} {'Dir edges':>10} {'Dir km':>9} {'% dir km':>10}"
+        f"  {'Phys segs':>10} {'Phys km':>9} {'% phys km':>10}"
+    )
+    typer.echo(f"  {'-' * 75}")
+    for rp in ("rp10", "rp20", "rp100"):
+        col_m = f"jrc_{rp}_exposed_m"
+        if col_m not in gdf.columns:
+            continue
+        dir_exp = int((gdf[col_m] > 0).sum())
+        dir_km = gdf[col_m].sum() / 1000
+        dir_pct = (dir_km / total_km * 100) if total_km > 0 else 0.0
+        # Physical: per segment, keep max exposed_m across directed edges
+        phys_grp = gdf.groupby(["osm_id", "edge_seq"])[col_m].max()
+        phys_exp = int((phys_grp > 0).sum())
+        phys_km = phys_grp.sum() / 1000
+        phys_pct = (phys_km / total_phys_km * 100) if total_phys_km > 0 else 0.0
+        typer.echo(
+            f"  {rp.upper():<10} {dir_exp:>10,} {dir_km:>9.3f} {dir_pct:>9.2f}%"
+            f"  {phys_exp:>10,} {phys_km:>9.3f} {phys_pct:>9.2f}%"
+        )
+
+    typer.echo("")
+    typer.echo("JRC Status breakdown (RP10, directed edges):")
+    if "jrc_rp10_status" in gdf.columns:
+        for status, cnt in gdf["jrc_rp10_status"].value_counts().items():
+            typer.echo(f"  {status:<20} {cnt:>6,}")
+
+    typer.echo("")
+    typer.echo("Depth class breakdown (RP10, non-permanent, by max depth per directed edge):")
+    if "jrc_rp10_depth_max_m" in gdf.columns:
+        exposed = gdf[gdf["jrc_rp10_exposed_m"] > 0].copy()
+        no_inund = int((exposed["jrc_rp10_depth_max_m"] < 0.10).sum())
+        low = (
+            int(
+                (
+                    (exposed["jrc_rp10_depth_max_m"] >= 0.10)
+                    & (exposed["jrc_rp10_depth_max_m"] < 0.50)
+                ).sum()
+            )
+            if len(exposed)
+            else 0
+        )
+        med = (
+            int(
+                (
+                    (exposed["jrc_rp10_depth_max_m"] >= 0.50)
+                    & (exposed["jrc_rp10_depth_max_m"] <= 1.50)
+                ).sum()
+            )
+            if len(exposed)
+            else 0
+        )
+        hi = int((exposed["jrc_rp10_depth_max_m"] > 1.50).sum())
+        typer.echo(f"  no_modeled_inundation (<0.10 m): {no_inund:>6,}")
+        typer.echo(f"  Low  [0.10, 0.50)            m: {low:>6,}")
+        typer.echo(f"  Med  [0.50, 1.50]            m: {med:>6,}")
+        typer.echo(f"  High (1.50, ∞)               m: {hi:>6,}")
+
+    typer.echo("")
+    typer.echo("Waterway evidence:")
+    if "waterway_crossing" in gdf.columns:
+        n_cross = int(gdf["waterway_crossing"].sum())
+        typer.echo(f"  Edges crossing waterway : {n_cross:,}")
+    if "waterway_nearest_dist_m" in gdf.columns:
+        med_dist = gdf["waterway_nearest_dist_m"].median()
+        typer.echo(f"  Median dist to waterway : {med_dist:.0f} m")
+
+    typer.echo("")
+    typer.echo("Terrain evidence:")
+    for col, label in [
+        ("terrain_elev_mean_m", "Mean elevation  "),
+        ("terrain_slope_pct", "Mean slope      "),
+    ]:
+        if col in gdf.columns:
+            v = gdf[col].mean()
+            typer.echo(f"  {label}: {v:.2f}")
+
+    typer.echo("")
+    typer.echo("Network evidence:")
+    if "network_wcc_id" in gdf.columns:
+        n_wcc = gdf["network_wcc_id"].nunique()
+        pct_main = int((gdf["network_wcc_id"] == 0).sum()) / n_total * 100
+        typer.echo(f"  Weakly connected components : {n_wcc}")
+        typer.echo(f"  Edges in largest WCC        : {pct_main:.1f}%")
+
+    typer.echo(f"\n{'=' * 65}")
+    typer.echo("NOTE: This report records evidence only.")
+    typer.echo("Passability and routing decisions are NOT inferred here.")
+    typer.echo("")
 
 
 # ---------------------------------------------------------------------------

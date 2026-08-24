@@ -21,6 +21,7 @@ dependencies = [
     "geopandas>=0.14",
     "osmium>=4.3,<5",
     "networkx>=3.3",
+    "earthengine-api>=1.7",
 ]
 
 [project.optional-dependencies]
