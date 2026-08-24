@@ -1,0 +1,237 @@
+schema_version: "1.0"
+
+dataset_id: jrc_glofas_flood_hazard_v21
+title: "JRC Global River Flood Hazard Maps — Version 2.1 (GloFAS)"
+category: flood_hazard
+
+description: >
+  Global River Flood Hazard Maps produced by the Joint Research Centre (JRC) of the
+  European Commission, based on GloFAS (Global Flood Awareness System) hydrological and
+  hydraulic modelling. Version 2.1 provides modelled inundation depth (metres) at seven
+  return periods (RP10, RP20, RP50, RP75, RP100, RP200, RP500) at approximately 90 m
+  spatial resolution.
+
+  The dataset covers global rivers with upstream catchment areas above approximately
+  500 km². Smaller basins — including many Philippine rivers — may have limited or no
+  modelled coverage.
+
+  NODATA SEMANTICS (verified from depth_category band, 2026-08-23):
+    The depth bands use -9999.0 as a sentinel with two semantically distinct meanings
+    that can only be distinguished by cross-referencing the depth_category ancillary band:
+
+    depth_category == -9999 AND depth == -9999  →  OUTSIDE MODEL DOMAIN
+      The GloFAS hydraulic model has no output for this cell.
+
+    depth_category == -1 or 0 AND depth == -9999  →  MODELLED DRY
+      The cell is within the GloFAS model domain but is not inundated at this return
+      period.  Value -1 is used in the western sub-area of tile ID230_N20_E120 (Sibalom
+      area); value 0 is used in the eastern and southern sub-areas (San Jose, Hamtic).
+
+    depth_category in {2, 3, …} AND depth > 0  →  FLOODED
+      Modelled inundation with depth in metres.  Category encodes a depth class.
+
+    The depth_category band is the authoritative domain indicator.  Presence of a
+    non-sentinel depth value alone is insufficient to identify modelled-dry cells.
+
+  PERMANENT WATER:
+    The permanent_water_class band (1 = permanent water, -1 = unknown) identifies river
+    channel pixels that are perennially wet.  Depths over permanent-water pixels reflect
+    channel depth at the given return period, NOT over-bank inundation.  These pixels
+    must be excluded from road hazard exposure analysis because roads crossing them are
+    bridges rather than at-grade corridors at risk of inundation.
+
+  1.0 M DEPTH FLOOR (Sibalom-specific artifact):
+    In the Sibalom sub-area, 280 of 286 permanent-water pixels carry exactly 1.0 m depth.
+    This is a river-channel minimum-depth artifact in permanent-water pixels, NOT a
+    general floor across the dataset.  It is absent from non-permanent pixels in Sibalom
+    and not observed in San Jose or Hamtic.  Depth distributions for non-permanent pixels
+    in San Jose span 0.103–3.540 m without clamping.
+
+  ANALYTICAL CLASSES (FloodRoute project thresholds — NOT native JRC classes):
+    Adapted from Philippine flood hazard metadata for comparative analysis.
+    Below 0.10 m  : below analysis threshold (not classified)
+    0.10–0.50 m   : Low
+    0.50–1.50 m   : Medium
+    Above 1.50 m  : High
+
+  BANDS acquired for this project (5-band depth GeoTIFF):
+    Band 1  RP10_depth             — 10-year return period flood depth (m)
+    Band 2  RP20_depth             — 20-year return period flood depth (m)
+    Band 3  RP100_depth            — 100-year return period flood depth (m)
+    Band 4  permanent_water_class  — 1 = permanent water, -1 = unknown
+    Band 5  spurious_depth_category — -1 = not flagged; positive = flagged category
+
+  BANDS acquired separately (4-band category GeoTIFF):
+    Band 1  RP10_depth_category    — depth class category at RP10
+    Band 2  RP100_depth_category   — depth class category at RP100
+    Band 3  permanent_water_class  — same as in depth raster
+    Band 4  spurious_depth_category — same as in depth raster
+
+  TERMS OF USE:
+    "The dataset is available without restriction on use or distribution."
+    — JRC EE dataset documentation (accessed 2026-08-23).
+    No licence key or EULA acceptance required.
+    Attribution recommended: cite Baugh et al. 2024 (see citation field).
+
+  ACCESS:
+    Google Earth Engine ImageCollection: JRC/CEMS_GLOFAS/FloodHazard/v2_1
+    Collection size: 264 tiles (10°×10° tiled global coverage)
+    Tile intersecting all three study municipalities: ID230_N20_E120
+
+  ACQUISITION:
+    Acquired via ee.Image.getDownloadURL() using project 'geo-analyzer-web' (Community Tier).
+    Separate subsets acquired per municipality + 0.05° buffer.
+    Acquisition timestamp: 2026-08-23
+
+source_agency: >
+  European Commission Joint Research Centre (JRC) / Copernicus Emergency
+  Management Service (CEMS) / Global Flood Awareness System (GloFAS)
+source_url: "https://developers.google.com/earth-engine/datasets/catalog/JRC_CEMS_GLOFAS_FloodHazard_v2_1"
+landing_page_url: "https://developers.google.com/earth-engine/datasets/catalog/JRC_CEMS_GLOFAS_FloodHazard_v2_1"
+license_name: "Unrestricted use and distribution (JRC/GloFAS open data)"
+license_url: null
+
+access_method: api
+acquisition_status: acquired
+acquisition_date: "2026-08-23"
+
+temporal_coverage: "2024"    # v2.1 publication; underlying GloFAS model updated 2021-2024
+geographic_coverage: >
+  Global coverage (rivers with catchment area ≥ ~500 km²).
+  Three study municipalities in Antique Province, Philippines — all within tile ID230_N20_E120:
+    PH0600616  Sibalom       — raster bounds [121.924°E, 10.639°N, 122.244°E, 10.902°N]
+    PH0600613  San Jose de Buenavista — raster bounds (subset within same tile)
+    PH0600608  Hamtic        — raster bounds (subset within same tile)
+expected_format: geotiff
+
+# ── Acquired raw files (one depth TIF + one category TIF per municipality) ──
+acquired_files:
+  sibalom_depth:
+    path: "raw/jrc_glofas_flood_hazard/sibalom_jrc_glofas_v21_raw.tif"
+    municipality: PH0600616
+    file_size_bytes: 22326
+    sha256: "2a65de07fa7679954a54888707bb9b4c42824ba725968bdf2920b8bbad3ee557"
+    band_type: depth_5band
+  sibalom_cat:
+    path: "raw/jrc_glofas_flood_hazard/sibalom_jrc_glofas_v21_categories.tif"
+    municipality: PH0600616
+    file_size_bytes: 5530
+    band_type: category_4band
+  san_jose_depth:
+    path: "raw/jrc_glofas_flood_hazard/ph0600613_jrc_glofas_v21_raw.tif"
+    municipality: PH0600613
+    file_size_bytes: 12628
+    sha256: "bd1d932f..."   # confirmed acquisition; exact hash in Phase A readiness report
+    band_type: depth_5band
+  san_jose_cat:
+    path: "raw/jrc_glofas_flood_hazard/ph0600613_jrc_glofas_v21_categories.tif"
+    municipality: PH0600613
+    file_size_bytes: 2590
+    band_type: category_4band
+  hamtic_depth:
+    path: "raw/jrc_glofas_flood_hazard/ph0600608_jrc_glofas_v21_raw.tif"
+    municipality: PH0600608
+    file_size_bytes: 7697
+    sha256: "c78b1dcb..."   # confirmed acquisition; exact hash in Phase A readiness report
+    band_type: depth_5band
+  hamtic_cat:
+    path: "raw/jrc_glofas_flood_hazard/ph0600608_jrc_glofas_v21_categories.tif"
+    municipality: PH0600608
+    file_size_bytes: 3155
+    band_type: category_4band
+
+# ── GEE source tile ─────────────────────────────────────────────────────────
+ee_collection: "JRC/CEMS_GLOFAS/FloodHazard/v2_1"
+ee_tile_id: "JRC/CEMS_GLOFAS/FloodHazard/v2_1/ID230_N20_E120"
+ee_collection_size: 264
+ee_project: "geo-analyzer-web"    # non-secret GEE Cloud project identifier
+
+# ── Raster format (common to all subsets) ───────────────────────────────────
+raster_metadata:
+  driver: GTiff
+  crs: EPSG:4326
+  band_count_depth: 5
+  band_count_category: 4
+  band_order_depth:
+    1: RP10_depth
+    2: RP20_depth
+    3: RP100_depth
+    4: permanent_water_class
+    5: spurious_depth_category
+  band_order_category:
+    1: RP10_depth_category
+    2: RP100_depth_category
+    3: permanent_water_class
+    4: spurious_depth_category
+  dtype: float32
+  nodata_sentinel: -9999.0    # stored in pixel values; see NODATA SEMANTICS above
+  pixel_size_deg: 0.000808484
+  pixel_size_m_approx: 90
+
+# ── LiPAD suitability note ──────────────────────────────────────────────────
+lipad_assessment: >
+  Phil-LiDAR 1 (LiPAD) flood hazard layers for Sibalom River (ISO record: Flood
+  Hazard Map — Sibalom River) were assessed as a potential higher-resolution substitute.
+  Programmatic geographic intersection (verified 2026-08-23) confirms that the LiPAD
+  ISO record extent [122.322°E, 10.667°N, 122.430°E, 10.808°N] does NOT intersect any
+  of the three study municipalities:
+    Sibalom (PH0600616):  gap ≈ 13.9 km
+    San Jose (PH0600613): gap ≈ 35.8 km
+    Hamtic (PH0600608):   gap ≈ 27.1 km
+  LiPAD cannot substitute for JRC data for any of the three study municipalities.
+  The LiPAD manifest (data/manifests/noah_flood_hazard_antique.yaml) is retained for
+  documentation only; acquisition_status remains not_requested.
+
+# ── Phase A decisions (per municipality) ───────────────────────────────────
+phase_a_decisions:
+  PH0600616_Sibalom:
+    decision: BLOCKED
+    reason: >
+      Zero non-permanent flooded pixels at RP10 within municipality boundary.
+      All 291 flooded pixels are permanent-water channel pixels.  The Sibalom basin
+      (~443 km²) falls below the GloFAS reliable modelling threshold (~500 km²),
+      producing no over-bank inundation signal for at-grade road segments.
+    phase_b_permitted: false
+    readiness_report: "processed/hazard/PH0600616_jrc_phase_a_readiness.yaml"
+
+  PH0600613_SanJose:
+    decision: READY
+    reason: >
+      265 non-permanent flooded pixels at RP10; gain of 181 additional pixels RP10→RP100;
+      39 normal road segments with interior overlap ≥ 5 m (3.932 km); depth range
+      0.103–3.540 m without depth-floor clamping.  All three suitability gates met.
+      San Jose de Buenavista replaces Sibalom as the primary Stage 5 testbed.
+    phase_b_permitted: true
+    readiness_report: "processed/hazard/PH0600613_jrc_phase_a_readiness.yaml"
+
+  PH0600608_Hamtic:
+    decision: PARTIAL
+    reason: >
+      12 non-permanent pixels at RP10 (≥ minimum threshold of 10) and gain of 87
+      RP10→RP100 (≥ 5), but only 2 normal road segments with interior overlap
+      (0.066 km) — below the 3-segment minimum for comparative routing observations.
+    phase_b_permitted: false
+    readiness_report: "processed/hazard/PH0600608_jrc_phase_a_readiness.yaml"
+
+provenance: derived
+validation_status: validated
+validation_notes: >
+  Phase A corrected suitability assessment completed 2026-08-23.
+  Three-state pixel categorisation verified from depth_category ancillary band.
+  Interior-overlap intersection method (≥ 5 m) applied for road exposure.
+  Permanent-water pixels excluded from road exposure analysis.
+  LiPAD geographic suitability programmatically confirmed as not applicable.
+  See per-municipality readiness YAMLs in data/processed/hazard/ for full statistics.
+
+required_for_stage: 5
+citation: >
+  Baugh, C., Colonese, J., D'Angelo, C., Dottori, F., Neal, J., Prudhomme, C., &
+  Salamon, P. (2024). LISFLOOD-FP 8.0 – the new discontinuous Galerkin shallow-water
+  solver for multi-scale flood inundation. Geoscientific Model Development, 17(9),
+  3507–3523. https://doi.org/10.5194/gmd-17-3507-2024
+
+  JRC/CEMS/GloFAS. (2024). JRC Global River Flood Hazard Maps Version 2.1.
+  Google Earth Engine: JRC/CEMS_GLOFAS/FloodHazard/v2_1.
+  European Commission Joint Research Centre.
+  https://developers.google.com/earth-engine/datasets/catalog/JRC_CEMS_GLOFAS_FloodHazard_v2_1
+  Retrieved 2026-08-23.
