@@ -2261,6 +2261,161 @@ def inspect_shelters(
 
 
 # ---------------------------------------------------------------------------
+# Stage 6B — shelter candidate snapping
+# ---------------------------------------------------------------------------
+
+_DEFAULT_MUNI_WGS84 = _DEFAULT_DATA / "processed" / "admin" / "municipalities_wgs84.gpkg"
+_DEFAULT_SJDB_GRAPHML = _DEFAULT_GRAPH / "PH0600613_graph.graphml"
+_DEFAULT_SJDB_PSGC = "PH0600613"
+
+
+@app.command("snap-shelters")
+def snap_shelters(
+    shelters_path: Annotated[
+        Path,
+        typer.Option(
+            "--shelters",
+            "-s",
+            help="Path to the shelter import CSV.",
+        ),
+    ] = _DEFAULT_SHELTER_CSV,
+    municipalities_gpkg: Annotated[
+        Path,
+        typer.Option(
+            "--municipalities",
+            "-m",
+            help="Path to the municipalities WGS-84 GeoPackage.",
+        ),
+    ] = _DEFAULT_MUNI_WGS84,
+    graph_path: Annotated[
+        Path,
+        typer.Option(
+            "--graph",
+            "-g",
+            help="Path to the road-graph GraphML file.",
+        ),
+    ] = _DEFAULT_SJDB_GRAPHML,
+    psgc: Annotated[
+        str,
+        typer.Option(
+            "--psgc",
+            help="PSGC code of the target municipality.",
+        ),
+    ] = _DEFAULT_SJDB_PSGC,
+    warn_m: Annotated[
+        float,
+        typer.Option("--warn-m", help="Snap distance warning threshold in metres."),
+    ] = 100.0,
+    reject_m: Annotated[
+        float,
+        typer.Option("--reject-m", help="Snap distance rejection threshold in metres."),
+    ] = 500.0,
+    log_level: Annotated[
+        str,
+        typer.Option("--log-level", help="Logging level."),
+    ] = "WARNING",
+) -> None:
+    """Stage 6B: validate shelter candidates against municipal boundary and snap to road graph.
+
+    Loads shelter records from the import CSV, checks each against the San Jose
+    de Buenavista municipal boundary, and snaps eligible entrances to the nearest
+    node in the road graph.  Produces a readiness decision (READY/PARTIAL/BLOCKED).
+
+    This command does NOT perform routing, demand modelling, or allocation.
+    """
+    configure_logging(log_level)  # type: ignore[arg-type]
+    logger.info("snap-shelters: shelters=%s psgc=%s", shelters_path, psgc)
+
+    for label, path in [
+        ("Shelter CSV", shelters_path),
+        ("Municipalities GPKG", municipalities_gpkg),
+        ("Graph GraphML", graph_path),
+    ]:
+        if not path.exists():
+            typer.echo(f"ERROR: {label} not found: {path}", err=True)
+            raise typer.Exit(code=1)
+
+    from floodroute.shelters.phase_b import run_phase_b
+
+    try:
+        report = run_phase_b(
+            shelter_csv=shelters_path,
+            municipalities_gpkg=municipalities_gpkg,
+            graph_graphml=graph_path,
+            target_psgc=psgc,
+            warn_m=warn_m,
+            reject_m=reject_m,
+        )
+    except KeyError as exc:
+        typer.echo(f"ERROR: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    # ------------------------------------------------------------------
+    # Report
+    # ------------------------------------------------------------------
+    typer.echo(f"\n{'=' * 65}")
+    typer.echo(f"Stage 6B Shelter Snap Report — PSGC {psgc}")
+    typer.echo(f"{'=' * 65}")
+    typer.echo(f"  Shelter CSV        : {shelters_path}")
+    typer.echo(f"  Records validated  : {report.n_validated}")
+
+    if report.validation_errors:
+        typer.echo(f"\n  Validation errors ({len(report.validation_errors)}):")
+        for msg in report.validation_errors:
+            typer.echo(f"    [!] {msg}")
+
+    typer.echo(f"\n  Municipal boundary check (PSGC {psgc}):")
+    for cr in report.containment_results:
+        mark = "IN " if cr.inside else "OUT"
+        dist = f"  ({cr.distance_to_boundary_m:+.1f} m)" if cr.distance_to_boundary_m is not None else ""
+        typer.echo(f"    [{mark}] {cr.shelter_id}{dist}{' — ' + cr.message if cr.message else ''}")
+
+    typer.echo("\n  Graph snap results:")
+    for sr in report.snap_results:
+        if sr.status == "skipped":
+            typer.echo(f"    [SKIP] {sr.shelter_id} — ineligible")
+        elif sr.status == "no_entrance":
+            typer.echo(f"    [----] {sr.shelter_id} — no entrance coordinates")
+        elif sr.status == "snapped":
+            typer.echo(
+                f"    [OK  ] {sr.shelter_id} → node {sr.snapped_node_id} "
+                f"({sr.snap_distance_m:.1f} m)"
+            )
+        elif sr.status == "warned":
+            typer.echo(
+                f"    [WARN] {sr.shelter_id} → node {sr.snapped_node_id} "
+                f"({sr.snap_distance_m:.1f} m) — {sr.message}"
+            )
+        elif sr.status == "rejected":
+            typer.echo(
+                f"    [REJ ] {sr.shelter_id} — {sr.message}"
+            )
+
+    typer.echo(
+        f"\n  Snap summary: {report.n_accepted_snaps} accepted, "
+        f"{report.n_no_entrance} no entrance, "
+        f"{report.n_rejected_snaps} rejected."
+    )
+
+    typer.echo(f"\n  Readiness: {report.readiness.summary}")
+    if report.readiness.reasons:
+        for reason in report.readiness.reasons:
+            typer.echo(f"    - {reason}")
+
+    typer.echo(
+        f"  Counts: {report.readiness.n_total} total / "
+        f"{report.readiness.n_eligible} eligible / "
+        f"{report.readiness.n_routable} routable / "
+        f"{report.readiness.n_verified} verified / "
+        f"{report.readiness.n_auth_capacity} auth_cap"
+    )
+    typer.echo("")
+
+    if report.validation_errors:
+        raise typer.Exit(code=1)
+
+
+# ---------------------------------------------------------------------------
 # Entrypoint
 # ---------------------------------------------------------------------------
 

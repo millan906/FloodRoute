@@ -117,6 +117,17 @@ class ShelterRecord(BaseModel):
     source_url: str | None = None
     source_date: str | None = None
     issuing_office: str | None = None
+    # ---- Coordinate provenance (Stage 6B extension) ----------------------
+    # All three fields are optional and backward-compatible with Stage 6A records.
+    coordinate_source: str | None = None
+    # Free-text label for the origin of the lat/lon and entrance coordinates,
+    # e.g. "lgu_record", "map_inspection", "gps_field_survey", "google_maps".
+    coordinate_method: str | None = None
+    # Method used to determine coordinates, e.g. "entrance_gps",
+    # "facility_centroid", "map_derived_centroid".
+    # Do not use "facility_centroid" as entrance without labelling it here.
+    coordinate_uncertainty_m: float | None = None
+    # Estimated positional uncertainty in metres.  None = not assessed.
     notes: str | None = None
 
     # ------------------------------------------------------------------ #
@@ -272,6 +283,8 @@ def _coerce_row(row: dict[str, str]) -> dict[str, Any]:
         "source_url",
         "source_date",
         "issuing_office",
+        "coordinate_source",
+        "coordinate_method",
         "notes",
     }
     float_fields = {
@@ -279,6 +292,7 @@ def _coerce_row(row: dict[str, str]) -> dict[str, Any]:
         "longitude",
         "entrance_latitude",
         "entrance_longitude",
+        "coordinate_uncertainty_m",
     }
     int_fields = {"official_capacity", "scenario_capacity"}
 
