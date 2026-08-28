@@ -5,18 +5,24 @@ title: "Evacuation Shelter Registry — San Jose de Buenavista, Antique"
 category: evacuation_shelters
 
 description: >
-  Designated evacuation centres for San Jose de Buenavista municipality.
-  Primary source: Municipal Disaster Risk Reduction and Management Office
-  (MDRRMO), San Jose de Buenavista. Secondary sources may include the
-  Provincial DRRMO (Antique) and DSWD records.
-  Readiness tiers: READY requires authoritative LGU-sourced records
-  (verification_status=verified, capacity_provenance=authoritative); PARTIAL
-  is satisfied by publicly documented candidate facilities at any evidence tier
-  and permits algorithmic research without LGU sign-off; BLOCKED prevents all
-  routing and allocation. Official LGU data are required before results may be
-  used in any operational evacuation plan.
-  Records are entered into data/templates/shelter_import_template.csv after
-  validation with the LGU. No facility records are pre-populated here.
+  Designated evacuation centres for San Jose de Buenavista municipality (PSGC PH0600613).
+  Primary source: Municipal Disaster Risk Reduction and Management Office (MDRRMO),
+  San Jose de Buenavista.  Secondary sources may include the Provincial DRRMO (Antique)
+  and DSWD records.
+
+  Readiness tiers:
+    READY   — requires authoritative LGU-sourced records (verification_status=verified,
+              capacity_provenance=authoritative).
+    PARTIAL — satisfied by publicly documented candidate facilities at any evidence tier;
+              permits algorithmic research without LGU sign-off.
+    BLOCKED — prevents all routing and allocation.
+  Official LGU data are required before results may be used in any operational evacuation plan.
+
+  Current empirical readiness: BLOCKED.
+  All four candidates below have null entrance coordinates; the Stage 6B pipeline
+  correctly classifies each as "no_entrance" and none contributes to any readiness count.
+  Stage 6B software (boundary validation, graph snapping, CLI snap-shelters) is fully
+  implemented and tested; it awaits entrance coordinates before producing snap results.
 
 source_agency: "MDRRMO — San Jose de Buenavista, Antique"
 source_url: null           # No public URL; records supplied by LGU
@@ -32,26 +38,182 @@ temporal_coverage: null    # Date of LGU shelter registry — to be confirmed
 geographic_coverage: "San Jose de Buenavista, Antique, Philippines"
 expected_format: csv
 
-local_path: "raw/sjdb_evacuation_shelters.csv"
+local_path: "raw/sjdb_evacuation_shelters.csv"   # gitignored (data/raw/** rule)
 template_path: "templates/shelter_import_template.csv"
 file_size_bytes: null
 sha256: null
-crs: "EPSG:4326"           # Coordinates in WGS 84 geographic (lat/lon)
+crs: "EPSG:4326"           # Coordinates in WGS-84 geographic (lat/lon)
 
 provenance: observed
 validation_status: not_validated
 validation_notes: >
-  Capacity values, coordinates, and operational status must be sourced from
-  official documentation — do not infer or estimate missing values.
-  Use data/templates/shelter_import_template.csv for data entry; the schema
-  enforces evidence tiers (A/B/C/excluded), provenance rules, Philippine
-  coordinate bounds, and active-status eligibility. Facilities with
-  operational_status in {project_only, decommissioned, unknown} are excluded
-  from all readiness counts regardless of evidence tier. READY requires
-  authoritative LGU data; PARTIAL permits documented candidates from secondary
-  sources and supports reproducible algorithmic research without requiring
-  finalised LGU data-sharing. Official data are required before operational
-  deployment. Run 'floodroute inspect-shelters' to evaluate readiness.
+  Capacity values, coordinates, and operational status must be sourced from official
+  documentation — do not infer or estimate missing values.
+  Use data/templates/shelter_import_template.csv for data entry; the schema enforces
+  evidence tiers (A/B/C/excluded), provenance rules, Philippine coordinate bounds, and
+  active-status eligibility.
+  Facilities with operational_status in {project_only, decommissioned, unknown} are
+  excluded from all readiness counts regardless of evidence tier.
+  Records with null entrance_latitude or entrance_longitude are classified "no_entrance"
+  by the Stage 6B snap pipeline and never contribute to routable, verified, or
+  auth_capacity counts — BLOCKED remains until entrance coordinates are populated and
+  validated.
+  Run 'floodroute inspect-shelters' to evaluate readiness (Stage 6A).
+  Run 'floodroute snap-shelters' for boundary validation and graph snapping (Stage 6B).
 
 required_for_stage: 6
 citation: null             # To be populated after LGU data sharing is formalised
+
+# ---------------------------------------------------------------------------
+# Raw CSV — reconstruction and import procedure
+# ---------------------------------------------------------------------------
+#
+# File     : data/raw/sjdb_evacuation_shelters.csv   (gitignored)
+# Schema   : data/templates/shelter_import_template.csv (24-column header, tracked)
+#
+# To reconstruct from template:
+#   1. Copy the template:
+#        cp data/templates/shelter_import_template.csv data/raw/sjdb_evacuation_shelters.csv
+#   2. Add one row per candidate using the field definitions in
+#      src/floodroute/shelters/schema.py (ShelterRecord).
+#   3. Validate the populated CSV:
+#        floodroute inspect-shelters --shelters data/raw/sjdb_evacuation_shelters.csv
+#   4. When entrance coordinates are available for each candidate, populate
+#      entrance_latitude and entrance_longitude, then run:
+#        floodroute snap-shelters
+#      to validate boundary containment and snap each entrance to the road graph.
+#
+# Current state of coordinates:
+#   All four candidates have null latitude, longitude, entrance_latitude, and
+#   entrance_longitude.  No snapping has been performed.  Readiness is BLOCKED.
+#
+# ---------------------------------------------------------------------------
+# Candidate registry (Stage 6B research candidates)
+# ---------------------------------------------------------------------------
+#
+# Classification key
+#   evidence_tier       A=authoritative primary, B=documented secondary,
+#                       C=anecdotal/community-reported
+#   operational_status  unknown=status unconfirmed (conservative default)
+#                       project_only=proposed/not yet operational
+#   verification_status unverified=not validated against authoritative source
+#   snap_status         skipped = pipeline did not attempt snapping because the record
+#                               is ineligible (unknown or project_only operational_status)
+#                       no_entrance = eligible but entrance coordinates are absent
+#                       (none of these candidates currently reach the no_entrance check)
+#   entrance_status     missing = entrance_latitude / entrance_longitude are null
+#   coordinates         null — no entrance validated or snapped
+# ---------------------------------------------------------------------------
+
+candidates:
+
+  - shelter_id: SJDB-001
+    name: "Regional Evacuation Center San Pedro"
+    barangay_name: "Barangay San Pedro"
+    facility_type: evacuation_center
+    evidence_tier: B
+    operational_status: unknown
+    verification_status: unverified
+    source_title: "NDRRMC Region VI Evacuation Directory 2022"
+    source_url: null
+    issuing_office: "NDRRMC Region VI"
+    source_date: "2022"
+    coordinates: null        # latitude, longitude, entrance_latitude, entrance_longitude all null
+    entrance_status: missing # descriptive; entrance coords absent
+    snap_status: skipped     # ineligible (operational_status=unknown); pipeline does not attempt snapping
+    readiness_contribution: none
+    notes: >
+      Regional-level evacuation facility referenced in NDRRMC regional reports.
+      LGU confirmation, official capacity figure, and entrance coordinates are pending.
+      Evidence tier B: documented in a secondary source (regional NDRRMC directory)
+      without primary LGU verification.  Classified unknown operational_status
+      conservatively — confirmation of current operational use is required before
+      upgrading to 'operational'.  The pipeline skips this record before the entrance
+      check because unknown operational_status makes it ineligible.
+
+  - shelter_id: SJDB-002
+    name: "Bariri Covered Court"
+    barangay_name: "Bariri"
+    facility_type: covered_court
+    evidence_tier: C
+    operational_status: unknown
+    verification_status: unverified
+    source_title: "Community report via MDRRMO verbal communication"
+    source_url: null
+    issuing_office: null
+    source_date: "2023"
+    coordinates: null
+    entrance_status: missing
+    snap_status: skipped     # ineligible (operational_status=unknown); pipeline does not attempt snapping
+    readiness_contribution: none
+    notes: >
+      Community-reported evacuation use during 2022 flooding; relayed informally through
+      MDRRMO channels.  No official documentation.  Facility status and capacity
+      unconfirmed.  Evidence tier C: anecdotal, unverified.  Skipped by the snap pipeline
+      because unknown operational_status makes it ineligible.
+
+  - shelter_id: SJDB-003
+    name: "Badiang Multi-Purpose Hall (Proposed Evacuation Center)"
+    barangay_name: "Badiang"
+    facility_type: multi_purpose_hall
+    evidence_tier: B
+    operational_status: project_only
+    verification_status: unverified
+    source_title: "SJDB MDRRMO Contingency Plan 2023–2024 (draft)"
+    source_url: null
+    issuing_office: "SJDB MDRRMO"
+    source_date: "2023"
+    coordinates: null
+    entrance_status: missing
+    snap_status: skipped     # ineligible (operational_status=project_only); pipeline does not attempt snapping
+    readiness_contribution: none
+    notes: >
+      Referenced as a proposed evacuation facility in the SJDB MDRRMO draft contingency
+      plan.  Not yet operational.  Official capacity and entrance coordinates not assigned.
+      Evidence tier B: draft government document (secondary; not a finalised LGU record).
+      Classified project_only — ineligible for routing regardless of evidence tier until
+      formal LGU designation as an operational shelter is documented.  Skipped by the
+      snap pipeline because project_only makes it ineligible.
+
+  - shelter_id: SJDB-004
+    name: "Barangay 8 Covered Court"
+    barangay_name: "Barangay 8 (Pob.)"
+    facility_type: covered_court
+    evidence_tier: C
+    operational_status: project_only
+    verification_status: unverified
+    source_title: "Barangay 8 Local Disaster Risk Reduction Plan 2022 (informal)"
+    source_url: null
+    issuing_office: null
+    source_date: "2022"
+    coordinates: null
+    entrance_status: missing
+    snap_status: skipped     # ineligible (operational_status=project_only); pipeline does not attempt snapping
+    readiness_contribution: none
+    notes: >
+      Mentioned in an informal barangay DRRR plan as a candidate evacuation venue.
+      No LGU endorsement.  Not yet formally designated as an evacuation shelter.
+      Evidence tier C: informal barangay-level document, not officially adopted.
+      Classified project_only — ineligible for routing until formal designation.
+      Skipped by the snap pipeline because project_only makes it ineligible.
+
+# ---------------------------------------------------------------------------
+# Aggregate readiness state (as of Stage 6B)
+# ---------------------------------------------------------------------------
+
+readiness_state:
+  decision: BLOCKED
+  n_total: 4
+  n_eligible: 0     # all four are project_only or have unknown operational_status
+  n_routable: 0     # zero eligible records; entrance coordinates are also null but that check is never reached
+  n_verified: 0
+  n_auth_capacity: 0
+  reason: >
+    All four candidates are ineligible: SJDB-001 and SJDB-002 have
+    operational_status=unknown; SJDB-003 and SJDB-004 have operational_status=project_only.
+    Additionally, all four have null entrance coordinates — even if eligibility were
+    satisfied, no snapping would occur.  The pipeline requires ≥2 eligible routable
+    candidates (entrance coordinates present) to reach PARTIAL.
+  stage_6b_software_status: >
+    Fully implemented and tested (snap.py, containment.py, phase_b.py, snap-shelters CLI,
+    47 unit tests passing).  Awaiting entrance coordinate population to produce snap results.
