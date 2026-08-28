@@ -5,10 +5,18 @@ title: "Evacuation Shelter Registry — San Jose de Buenavista, Antique"
 category: evacuation_shelters
 
 description: >
-  Designated evacuation centres for San Jose de Buenavista municipality (PSGC PH0600613).
-  Primary source: Municipal Disaster Risk Reduction and Management Office (MDRRMO),
-  San Jose de Buenavista.  Secondary sources may include the Provincial DRRMO (Antique)
-  and DSWD records.
+  Researcher-curated public candidate registry for evacuation facilities in San Jose de
+  Buenavista municipality (PSGC PH0600613).  Each candidate record carries its own source
+  citation (source_title, source_url, issuing_office, source_date); the registry does not
+  represent a dataset supplied or validated by the MDRRMO or any LGU office.  Sources
+  range from Philippine News Agency articles and OSM building data to community reports
+  and draft contingency plans — evidence tiers (A/B/C) reflect source quality at the
+  individual record level.
+
+  An authoritative MDRRMO shelter registry has not been requested.  When obtained, it
+  would replace or supplement this candidate registry and enable upgrading records to
+  verification_status=verified and capacity_provenance=authoritative, which are
+  prerequisites for READY readiness.
 
   Readiness tiers:
     READY   — requires authoritative LGU-sourced records (verification_status=verified,
@@ -19,22 +27,26 @@ description: >
   Official LGU data are required before results may be used in any operational evacuation plan.
 
   Current empirical readiness: BLOCKED.
-  All four candidates below have null entrance coordinates; the Stage 6B pipeline
-  correctly classifies each as "no_entrance" and none contributes to any readiness count.
-  Stage 6B software (boundary validation, graph snapping, CLI snap-shelters) is fully
-  implemented and tested; it awaits entrance coordinates before producing snap results.
+  All four candidates are ineligible: SJDB-001 and SJDB-002 have operational_status=unknown;
+  SJDB-003 and SJDB-004 have operational_status=project_only.  SJDB-001's 2019 PNA/OCD
+  turnover article establishes historical formal designation only — it does not confirm
+  2026 current availability.  OSM-derived entrance coordinates and a computational
+  graph-proximity result (node 1345, 6.3 m) are retained as research reference but do not
+  contribute to readiness.  Stage 6B software is fully implemented and tested.
 
-source_agency: "MDRRMO — San Jose de Buenavista, Antique"
-source_url: null           # No public URL; records supplied by LGU
+source_agency: null         # No single supplying agency; see record-level source_title
+                            # and issuing_office for per-candidate citations
+source_url: null            # No single dataset URL; individual sources cited at record level
 landing_page_url: null
-license_name: null         # LGU data — data-sharing agreement required
+license_name: null          # No single license; individual record sources have varying terms
 license_url: null
 
-access_method: local_authority
-acquisition_status: not_requested
+access_method: researcher_assembled   # Assembled from public sources; no LGU data-sharing arrangement
+acquisition_status: not_requested     # MDRRMO dataset not yet requested; current registry is
+                                      # researcher-assembled and does not imply LGU supply
 acquisition_date: null
 
-temporal_coverage: null    # Date of LGU shelter registry — to be confirmed
+temporal_coverage: null    # Varies by candidate; see record-level source_date fields
 geographic_coverage: "San Jose de Buenavista, Antique, Philippines"
 expected_format: csv
 
@@ -62,7 +74,47 @@ validation_notes: >
   Run 'floodroute snap-shelters' for boundary validation and graph snapping (Stage 6B).
 
 required_for_stage: 6
-citation: null             # To be populated after LGU data sharing is formalised
+
+# ---------------------------------------------------------------------------
+# Acquisition scope
+# ---------------------------------------------------------------------------
+# Describes which facility types are in scope and the conditions for entry.
+
+acquisition_scope:
+  facility_types_in_scope: >
+    Purpose-built evacuation centers, covered courts, multi-purpose halls, and
+    contingency facilities explicitly designated or historically activated as
+    evacuation venues by the LGU.  Schools are within scope under the conditions
+    below.
+  school_contingency_facilities: >
+    Philippine LGUs routinely activate schools as contingency evacuation centers
+    during flood events.  A school may enter this registry only when one of the
+    following is documented: (a) formal LGU or DepEd designation (permanent,
+    contingency-based, or event-specific), or (b) evidence of historical
+    activation as an evacuation venue with an identifiable, citable source.
+    Schools must not be added based on proximity, capacity assumptions, or
+    undocumented informal use.
+  school_designation_types:
+    permanent:    "Formally designated in an official evacuation plan or LGU resolution."
+    contingency:  "Designated for use when primary shelters are insufficient or unavailable."
+    event_specific: "Activated for a named event; does not imply standing availability."
+  school_availability_caveats: >
+    School availability as an evacuation venue is conditional and must not be
+    assumed to persist across events.  Availability depends on: hazard type and
+    severity; event declaration status; whether the school is in session;
+    and LGU/DepEd authorization at the time of the event.  Historical activation
+    at one event does not imply availability for future events.  Do not infer
+    current availability or capacity from historical activation alone.
+  school_readiness_treatment: >
+    Schools without a documented designation or verified operational status
+    receive operational_status=unknown (or project_only if proposed but not yet
+    activated) and are excluded from readiness counts regardless of evidence tier.
+    The designation type (permanent/contingency/event-specific) must be preserved
+    in the candidate record notes.  Unverified schools never contribute to
+    n_eligible, n_routable, n_verified, or n_auth_capacity.
+
+citation: null             # No single citable dataset; individual candidates carry
+                           # record-level citations.  MDRRMO data-sharing not yet initiated.
 
 # ---------------------------------------------------------------------------
 # Raw CSV — reconstruction and import procedure
@@ -84,8 +136,11 @@ citation: null             # To be populated after LGU data sharing is formalise
 #      to validate boundary containment and snap each entrance to the road graph.
 #
 # Current state of coordinates:
-#   All four candidates have null latitude, longitude, entrance_latitude, and
-#   entrance_longitude.  No snapping has been performed.  Readiness is BLOCKED.
+#   SJDB-001: facility centroid (OSM polygon centroid) and entrance proxy (building west-face
+#             midpoint, OSM-derived) are populated; see candidate record for caveats.
+#             Entrance is provisional — not GPS-surveyed.
+#   SJDB-002, SJDB-003, SJDB-004: all coordinate fields are null.
+#   No pipeline snap has been performed (all candidates ineligible).  Readiness is BLOCKED.
 #
 # ---------------------------------------------------------------------------
 # Candidate registry (Stage 6B research candidates)
@@ -108,28 +163,84 @@ citation: null             # To be populated after LGU data sharing is formalise
 candidates:
 
   - shelter_id: SJDB-001
-    name: "Regional Evacuation Center San Pedro"
-    barangay_name: "Barangay San Pedro"
+    name: "Antique Regional Evacuation Center"
+    barangay_name: "San Pedro"
     facility_type: evacuation_center
     evidence_tier: B
-    operational_status: unknown
+    operational_status: unknown   # 2019 OCD/DPWH turnover is historical only; no post-2019
+                                  # source confirms 2026 current availability. unknown is
+                                  # the conservative default per schema semantics.
     verification_status: unverified
-    source_title: "NDRRMC Region VI Evacuation Directory 2022"
-    source_url: null
-    issuing_office: "NDRRMC Region VI"
-    source_date: "2022"
-    coordinates: null        # latitude, longitude, entrance_latitude, entrance_longitude all null
-    entrance_status: missing # descriptive; entrance coords absent
-    snap_status: skipped     # ineligible (operational_status=unknown); pipeline does not attempt snapping
-    readiness_contribution: none
+    source_title: "OCD turns over P36-M regional evacuation center to Antique"
+    source_url: "https://www.pna.gov.ph/articles/1065266"
+    issuing_office: "OCD-6 / DPWH Region VI"
+    source_date: "2019-03-21"
+    # Historical / formal-turnover evidence (not current-status confirmation):
+    #   PNA article (2019-03-21) documents the official OCD/DPWH P36M turnover ceremony;
+    #   the facility was transferred to the Municipality of San Jose de Buenavista.
+    #   OSM way:1394870512 tags the building as social_facility:shelter,
+    #   social_facility:for=displaced on Real Street, Barangay San Pedro.
+    #   Neither source confirms the facility is currently operational in 2026.
+    # Capacity note (historical reference — not a computational field):
+    historical_reported_capacity:
+      value: 130
+      unit: individuals
+      source_date: "2019-03-21"
+      exact_quotation: "can accommodate at least 33 families or 130 individuals"
+      provenance: "PNA news report describing the facility at the 2019 OCD/DPWH turnover"
+      limitation: >
+        Not verified as current usable capacity.  Stated in a news article at time of
+        turnover; no authoritative LGU capacity document was found.  Do not populate
+        official_capacity or scenario_capacity from this figure without MDRRMO/LGU
+        confirmation.
+    coordinates:
+      latitude: 10.800394           # OSM polygon centroid (way:1394870512)
+      longitude: 121.948801
+      entrance_latitude: 10.800406  # provisional access proxy — midpoint of building west
+      entrance_longitude: 121.948580  # face facing Real Street (OSM-derived; not surveyed)
+      coordinate_source: "OpenStreetMap way:1394870512 (Real Street, San Pedro)"
+      coordinate_method: "osm_polygon_centroid_facility;building_west_face_midpoint_entrance_proxy"
+      coordinate_uncertainty_m: 25  # map-inspection precision; not GPS-survey accuracy
+    entrance_status: present        # coordinates populated; labelled as provisional proxy
+    snap_status: skipped            # ineligible (operational_status=unknown); pipeline skips
+                                    # before entrance check — same rule as SJDB-002
+    # Graph-proximity note (research reference, not a pipeline snap result):
+    #   When treating SJDB-001 as eligible for testing purposes, the entrance proxy
+    #   (10.800406, 121.948580) snaps to road-graph node 1345 at 6.3 m and lies
+    #   436.4 m inside the municipal boundary.  This is a computational geometric fact
+    #   independent of operational status; it does not affect BLOCKED readiness.
+    readiness_contribution:
+      eligible: false     # operational_status=unknown → ineligible
+      routable: false     # ineligible record; entrance coords not used by pipeline
+      verified: false     # verification_status=unverified
+      auth_capacity: false  # official_capacity=null; scenario_capacity=null
     notes: >
-      Regional-level evacuation facility referenced in NDRRMC regional reports.
-      LGU confirmation, official capacity figure, and entrance coordinates are pending.
-      Evidence tier B: documented in a secondary source (regional NDRRMC directory)
-      without primary LGU verification.  Classified unknown operational_status
-      conservatively — confirmation of current operational use is required before
-      upgrading to 'operational'.  The pipeline skips this record before the entrance
-      check because unknown operational_status makes it ineligible.
+      [EXISTENCE]  Purpose-built P36M regional evacuation center funded by OCD and DPWH.
+      Officially turned over to the Municipality of San Jose de Buenavista on 21 March 2019
+      per PNA article (pna.gov.ph/articles/1065266).  Managed by LGU; monitored by OCD per
+      Memorandum of Agreement.  OSM way:1394870512 tags the building as social_facility:shelter
+      on Real Street, Barangay San Pedro — consistent with a purpose-built evacuation facility.
+
+      [CURRENT STATUS]  operational_status=unknown.  The 2019 OCD/DPWH turnover is
+      historical evidence of formal designation; it does not confirm the facility is
+      currently operational in 2026.  No post-2019 authoritative source was found.
+      Contact MDRRMO/LGU to confirm current availability before upgrading this field.
+
+      [ENTRANCE PROXY]  entrance_latitude/longitude are a provisional access proxy derived
+      from the midpoint of the building's west face (facing Real Street) as mapped in OSM.
+      This is not a GPS-surveyed entrance.  coordinate_uncertainty_m=25 reflects
+      map-inspection precision only; do not treat as field-validated coordinates.
+
+      [CAPACITY]  official_capacity=null; scenario_capacity=null.  No verified current
+      usable capacity figure is available.  Historical reference: PNA 2019 article states
+      the center "can accommodate at least 33 families or 130 individuals" (exact quotation;
+      source date 2019-03-21; provenance: news report at time of turnover).  Recorded in
+      historical_reported_capacity above; must not be used as official_capacity or
+      scenario_capacity without MDRRMO/LGU confirmation.
+
+      [GRAPH PROXIMITY]  Computationally, the entrance proxy is 6.3 m from road-graph
+      node 1345 and 436.4 m inside the municipal boundary.  These are geometric facts
+      for research reference only; no pipeline snap is performed while record is ineligible.
 
   - shelter_id: SJDB-002
     name: "Bariri Covered Court"
@@ -144,13 +255,19 @@ candidates:
     source_date: "2023"
     coordinates: null
     entrance_status: missing
-    snap_status: skipped     # ineligible (operational_status=unknown); pipeline does not attempt snapping
-    readiness_contribution: none
+    snap_status: skipped     # ineligible (operational_status=unknown); pipeline skips before entrance check
+    readiness_contribution:
+      eligible: false   # operational_status=unknown → ineligible
+      routable: false
+      verified: false
+      auth_capacity: false
     notes: >
       Community-reported evacuation use during 2022 flooding; relayed informally through
       MDRRMO channels.  No official documentation.  Facility status and capacity
       unconfirmed.  Evidence tier C: anecdotal, unverified.  Skipped by the snap pipeline
-      because unknown operational_status makes it ineligible.
+      because unknown operational_status makes it ineligible.  To upgrade: obtain official
+      documentation of current operational use from the MDRRMO or LGU and add entrance
+      coordinates.
 
   - shelter_id: SJDB-003
     name: "Badiang Multi-Purpose Hall (Proposed Evacuation Center)"
@@ -165,8 +282,12 @@ candidates:
     source_date: "2023"
     coordinates: null
     entrance_status: missing
-    snap_status: skipped     # ineligible (operational_status=project_only); pipeline does not attempt snapping
-    readiness_contribution: none
+    snap_status: skipped     # ineligible (operational_status=project_only); pipeline skips before entrance check
+    readiness_contribution:
+      eligible: false   # operational_status=project_only → ineligible
+      routable: false
+      verified: false
+      auth_capacity: false
     notes: >
       Referenced as a proposed evacuation facility in the SJDB MDRRMO draft contingency
       plan.  Not yet operational.  Official capacity and entrance coordinates not assigned.
@@ -188,8 +309,12 @@ candidates:
     source_date: "2022"
     coordinates: null
     entrance_status: missing
-    snap_status: skipped     # ineligible (operational_status=project_only); pipeline does not attempt snapping
-    readiness_contribution: none
+    snap_status: skipped     # ineligible (operational_status=project_only); pipeline skips before entrance check
+    readiness_contribution:
+      eligible: false   # operational_status=project_only → ineligible
+      routable: false
+      verified: false
+      auth_capacity: false
     notes: >
       Mentioned in an informal barangay DRRR plan as a candidate evacuation venue.
       No LGU endorsement.  Not yet formally designated as an evacuation shelter.
@@ -202,18 +327,36 @@ candidates:
 # ---------------------------------------------------------------------------
 
 readiness_state:
+  # Produced by: floodroute snap-shelters (Stage 6B pipeline, 2026-08-28)
+  # Updated by: temporal-validity audit of SJDB-001 (2026-08-28)
   decision: BLOCKED
   n_total: 4
-  n_eligible: 0     # all four are project_only or have unknown operational_status
-  n_routable: 0     # zero eligible records; entrance coordinates are also null but that check is never reached
-  n_verified: 0
-  n_auth_capacity: 0
+  n_eligible: 0     # SJDB-001=unknown (ineligible), SJDB-002=unknown, SJDB-003/004=project_only
+  n_routable: 0     # no eligible record reaches the entrance-coordinate check
+  n_partial_candidates: 0   # eligible + routable; need ≥2 for PARTIAL
+  n_ready_candidates: 0     # eligible + routable + verified + auth_cap
+  n_verified: 0     # no candidate has verification_status=verified
+  n_auth_capacity: 0  # no candidate has official_capacity with authoritative provenance
   reason: >
-    All four candidates are ineligible: SJDB-001 and SJDB-002 have
-    operational_status=unknown; SJDB-003 and SJDB-004 have operational_status=project_only.
-    Additionally, all four have null entrance coordinates — even if eligibility were
-    satisfied, no snapping would occur.  The pipeline requires ≥2 eligible routable
-    candidates (entrance coordinates present) to reach PARTIAL.
+    All four candidates are ineligible: SJDB-001 and SJDB-002 have operational_status=unknown;
+    SJDB-003 and SJDB-004 have operational_status=project_only.  SJDB-001 operational_status
+    was corrected from 'operational' to 'unknown' during the 2026-08-28 temporal-validity
+    audit — the 2019 OCD/DPWH PNA article is historical evidence only; no post-2019 source
+    confirms 2026 availability.  Zero eligible candidates; PARTIAL requires ≥2 eligible+routable.
+  snap_results_summary:
+    SJDB-001: "skipped — ineligible (unknown operational_status), entrance proxy present but not used"
+    SJDB-002: "skipped — ineligible (unknown), no coordinates"
+    SJDB-003: "skipped — ineligible (project_only), no coordinates"
+    SJDB-004: "skipped — ineligible (project_only), no coordinates"
   stage_6b_software_status: >
     Fully implemented and tested (snap.py, containment.py, phase_b.py, snap-shelters CLI,
-    47 unit tests passing).  Awaiting entrance coordinate population to produce snap results.
+    54 unit tests passing).  Pipeline ran successfully on 2026-08-28.
+  path_to_partial: >
+    Confirm current operational status of SJDB-001 directly with MDRRMO/LGU and update
+    operational_status to 'operational' or 'standby'.  Then locate or confirm a second
+    eligible facility (e.g. confirm SJDB-002 is currently operational).  Both eligible
+    candidates must have entrance coordinates to reach PARTIAL.
+  path_to_ready: >
+    Two or more candidates must be: eligible, routable, verification_status=verified, and
+    have official_capacity with capacity_provenance=authoritative.  This requires formal
+    LGU data-sharing — none of the current candidates meets any of these criteria.
