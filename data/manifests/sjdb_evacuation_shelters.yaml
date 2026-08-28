@@ -5,14 +5,18 @@ title: "Evacuation Shelter Registry — San Jose de Buenavista, Antique"
 category: evacuation_shelters
 
 description: >
-  Official list of designated evacuation centres for San Jose de Buenavista
-  municipality, including facility name, location, capacity, operator, and
-  accessibility status. Primary source is the Municipal Disaster Risk Reduction
-  and Management Office (MDRRMO) of San Jose de Buenavista. Secondary sources
-  may include the Provincial DRRMO (Antique) and DSWD records.
-  Records must be entered into data/templates/evacuation_shelters_template.csv
-  after validation with the LGU. No facility records are pre-populated in this
-  manifest; all values in the template must be sourced from official documentation.
+  Designated evacuation centres for San Jose de Buenavista municipality.
+  Primary source: Municipal Disaster Risk Reduction and Management Office
+  (MDRRMO), San Jose de Buenavista. Secondary sources may include the
+  Provincial DRRMO (Antique) and DSWD records.
+  Readiness tiers: READY requires authoritative LGU-sourced records
+  (verification_status=verified, capacity_provenance=authoritative); PARTIAL
+  is satisfied by publicly documented candidate facilities at any evidence tier
+  and permits algorithmic research without LGU sign-off; BLOCKED prevents all
+  routing and allocation. Official LGU data are required before results may be
+  used in any operational evacuation plan.
+  Records are entered into data/templates/shelter_import_template.csv after
+  validation with the LGU. No facility records are pre-populated here.
 
 source_agency: "MDRRMO — San Jose de Buenavista, Antique"
 source_url: null           # No public URL; records supplied by LGU
@@ -29,6 +33,7 @@ geographic_coverage: "San Jose de Buenavista, Antique, Philippines"
 expected_format: csv
 
 local_path: "raw/sjdb_evacuation_shelters.csv"
+template_path: "templates/shelter_import_template.csv"
 file_size_bytes: null
 sha256: null
 crs: "EPSG:4326"           # Coordinates in WGS 84 geographic (lat/lon)
@@ -36,10 +41,17 @@ crs: "EPSG:4326"           # Coordinates in WGS 84 geographic (lat/lon)
 provenance: observed
 validation_status: not_validated
 validation_notes: >
-  All shelter records require validation against official MDRRMO documentation
-  before use in analysis. Capacity values, coordinates, and operational status
-  must be confirmed — do not infer or estimate missing values.
-  Use data/templates/evacuation_shelters_template.csv for data entry.
+  Capacity values, coordinates, and operational status must be sourced from
+  official documentation — do not infer or estimate missing values.
+  Use data/templates/shelter_import_template.csv for data entry; the schema
+  enforces evidence tiers (A/B/C/excluded), provenance rules, Philippine
+  coordinate bounds, and active-status eligibility. Facilities with
+  operational_status in {project_only, decommissioned, unknown} are excluded
+  from all readiness counts regardless of evidence tier. READY requires
+  authoritative LGU data; PARTIAL permits documented candidates from secondary
+  sources and supports reproducible algorithmic research without requiring
+  finalised LGU data-sharing. Official data are required before operational
+  deployment. Run 'floodroute inspect-shelters' to evaluate readiness.
 
-required_for_stage: 1
+required_for_stage: 6
 citation: null             # To be populated after LGU data sharing is formalised
