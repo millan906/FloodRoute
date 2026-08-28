@@ -2147,6 +2147,120 @@ def hazard_summary(
 
 
 # ---------------------------------------------------------------------------
+# Stage 6A — shelter readiness
+# ---------------------------------------------------------------------------
+
+_DEFAULT_SHELTER_CSV = _DEFAULT_DATA / "raw" / "sjdb_evacuation_shelters.csv"
+_DEFAULT_SHELTER_TEMPLATE = _DEFAULT_DATA / "templates" / "shelter_import_template.csv"
+
+
+@app.command("inspect-shelters")
+def inspect_shelters(
+    shelters_path: Annotated[
+        Path,
+        typer.Option(
+            "--shelters",
+            "-s",
+            help="Path to the shelter import CSV (Stage 6A candidate data).",
+        ),
+    ] = _DEFAULT_SHELTER_CSV,
+    log_level: Annotated[
+        str,
+        typer.Option("--log-level", help="Logging level."),
+    ] = "INFO",
+) -> None:
+    """Validate shelter import CSV and report Stage 6A readiness.
+
+    Reads the shelter candidate CSV, validates every record against the
+    evidence-tiered import schema, checks for duplicate IDs, and returns:
+
+    \b
+      READY   — ≥2 eligible, verified, routable shelters with authoritative capacity.
+      PARTIAL — ≥2 eligible, routable candidates, but capacity or status is incomplete.
+      BLOCKED — fewer than 2 eligible routable candidates.
+
+    This command does NOT perform routing, graph snapping, or demand modelling.
+    """
+    configure_logging(log_level)  # type: ignore[arg-type]
+    logger.info("inspect-shelters: path=%s", shelters_path)
+
+    if not shelters_path.exists():
+        typer.echo(
+            f"ERROR: Shelter import CSV not found: {shelters_path}\n"
+            f"Copy the template and populate it:\n"
+            f"  cp {_DEFAULT_SHELTER_TEMPLATE} {shelters_path}",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    from floodroute.shelters.readiness import ReadinessDecision, evaluate_shelter_readiness
+    from floodroute.shelters.schema import load_shelter_csv, validate_shelter_records
+
+    raw_rows = load_shelter_csv(shelters_path)
+
+    typer.echo("\nShelter Import — Stage 6A Readiness Report")
+    typer.echo(f"Source: {shelters_path}")
+    typer.echo(f"Rows in file (excluding header): {len(raw_rows)}")
+
+    if not raw_rows:
+        typer.echo("\nNo shelter records found (template is empty).")
+        typer.echo(f"\n{'=' * 60}")
+        typer.echo("STAGE 6A DECISION: [✗] BLOCKED")
+        typer.echo("  - No shelter records loaded.")
+        typer.echo(
+            "\nPopulate the CSV using MDRRMO/LGU documentation and re-run."
+        )
+        raise typer.Exit(code=0)
+
+    valid_records, errors = validate_shelter_records(raw_rows)
+
+    if errors:
+        typer.echo(f"\nValidation errors ({len(errors)}):")
+        for msg in errors:
+            typer.echo(f"  ERROR: {msg}")
+
+    typer.echo(f"\nRecords parsed: {len(raw_rows)}  valid: {len(valid_records)}  errors: {len(errors)}")
+
+    result = evaluate_shelter_readiness(valid_records)
+
+    typer.echo("\n--- Shelter candidate pool ---")
+    typer.echo(f"  Total records  : {result.n_total}")
+    typer.echo(f"  Eligible        : {result.n_eligible}  (tier≠excluded, status≠project_only)")
+    typer.echo(f"  Routable        : {result.n_routable}  (entrance coordinates present)")
+    typer.echo(f"  Verified        : {result.n_verified}  (verification_status=verified)")
+    typer.echo(f"  Auth. capacity  : {result.n_auth_capacity}  (official capacity, authoritative provenance)")
+
+    if result.blocking_ids:
+        typer.echo(f"\n  Eligible but missing entrance coords ({len(result.blocking_ids)}):")
+        for sid in result.blocking_ids[:10]:
+            typer.echo(f"    {sid}")
+        if len(result.blocking_ids) > 10:
+            typer.echo(f"    … and {len(result.blocking_ids) - 10} more")
+
+    decision_sym = {"READY": "[✓]", "PARTIAL": "[~]", "BLOCKED": "[✗]"}.get(
+        result.decision.value, "[?]"
+    )
+    typer.echo(f"\n{'=' * 60}")
+    typer.echo(f"STAGE 6A DECISION: {decision_sym} {result.decision.value}")
+    for r in result.reasons:
+        typer.echo(f"  - {r}")
+
+    if result.decision != ReadinessDecision.READY:
+        typer.echo(
+            "\nStage 6B shelter allocation will NOT run until readiness is READY."
+        )
+        typer.echo(
+            "See data/manifests/sjdb_evacuation_shelters.yaml "
+            "and data/templates/shelter_import_template.csv."
+        )
+
+    typer.echo("")
+
+    if errors:
+        raise typer.Exit(code=1)
+
+
+# ---------------------------------------------------------------------------
 # Entrypoint
 # ---------------------------------------------------------------------------
 
