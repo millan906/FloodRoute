@@ -208,6 +208,7 @@ def run_stage8_matrix(
 
     # --- 27-run matrix ---
     # Pre-build demands per fraction so routing is not repeated unnecessarily.
+    total_population = sum(o.population_2020 for o in origins)
     demands_by_fraction: dict[float, dict[int, int]] = {}
     for frac in DEMAND_FRACTIONS:
         d, _ = build_demands(origins, frac)
@@ -221,7 +222,7 @@ def run_stage8_matrix(
             for frac in DEMAND_FRACTIONS:
                 demands = demands_by_fraction[frac]
                 result = _run_one(G, alg, rp, frac, demands, scenario_shelters)
-                metrics = compute_metrics(result, G)
+                metrics = compute_metrics(result, G, total_population=total_population)
                 all_metrics.append(metrics)
 
                 # Detailed record — adds serialisable assignments/routes
@@ -239,7 +240,7 @@ def run_stage8_matrix(
     if all_metrics:
         fieldnames = list(all_metrics[0].keys())
         with csv_path.open("w", newline="", encoding="utf-8") as fh:
-            writer = csv.DictWriter(fh, fieldnames=fieldnames)
+            writer = csv.DictWriter(fh, fieldnames=fieldnames, lineterminator="\n")
             writer.writeheader()
             writer.writerows(all_metrics)
 

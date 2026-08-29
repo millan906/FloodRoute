@@ -29,8 +29,8 @@
   ],
   "num_runs": 27,
   "output_dir": "results/stage8",
-  "git_commit": "aab3c3c",
-  "created_at": "2026-08-29T05:48:03.101422+00:00",
+  "git_commit": "0cd8e94",
+  "created_at": "2026-08-29T08:30:17.134426+00:00",
   "origin_nodes": {
     "PH0600613001": 442,
     "PH0600613002": 361,

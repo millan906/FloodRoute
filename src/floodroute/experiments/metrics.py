@@ -139,6 +139,7 @@ def compute_flood_exposed_length(
 def compute_metrics(
     result: RunResult,
     G: nx.MultiDiGraph,
+    total_population: int | None = None,
 ) -> dict:
     """Compute all experiment metrics for one run.
 
@@ -148,6 +149,11 @@ def compute_metrics(
         Output from one of the algorithm functions.
     G:
         Road graph with JRC flood attributes (used for flood exposure).
+    total_population:
+        Municipality-level PSA census total (e.g. 65,140 for SJDB).  Written
+        verbatim to the ``total_population_2020`` column so every CSV row
+        carries the denominator used for demand scaling.  Pass ``None`` to
+        leave the column empty (e.g. in unit tests that use synthetic graphs).
 
     Returns
     -------
@@ -217,7 +223,7 @@ def compute_metrics(
         "algorithm": result.algorithm,
         "return_period": return_period,
         "demand_fraction": result.demand_fraction,
-        "total_population_2020": sum(demands.values()) if result.demand_fraction == 0 else None,
+        "total_population_2020": total_population,
         "total_demand": total_demand,
         "total_assigned": total_assigned,
         "total_unassigned": total_unassigned,
