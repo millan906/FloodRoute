@@ -1,73 +1,100 @@
 schema_version: "1.0"
 
 dataset_id: psa_barangay_population_2020_r06
-title: "PSA 2020 Census Barangay Population — Region VI (Western Visayas)"
+title: "PSA 2020 Census Barangay Population — San Jose de Buenavista (PH0600613), 28 barangays"
 category: barangay_population
 
 description: >
   Barangay-level population counts from the 2020 Census of Population and
-  Housing (2020 CPH), conducted as of May 1, 2020, tabulated for Region VI
-  (Western Visayas), covering Antique Province including San Jose de Buenavista
-  municipality (28 barangays, total population 65,140 per 2020 CPH results).
-  Used to spatialise evacuation demand at sub-municipal resolution; joined to
-  admin boundary polygons via 10-digit PSGC codes.
+  Housing (2020 CPH), reference date May 1, 2020, for San Jose de Buenavista
+  municipality (PSGC PH0600613), Antique Province, Philippines — 28 barangays,
+  total population 65,140.
 
-  Acquisition instructions (manual — requires OpenStat navigation):
-    PSA OpenStat portal: https://openstat.psa.gov.ph/PXWeb/pxweb/en/DB/DB__2A__CPH/
+  Provenance: Values were researcher-transcribed from PhilAtlas
+  (https://www.philatlas.com/visayas/r06/antique/san-jose-de-buenavista.html,
+  accessed 2026-08-29), a Philippine geographic data aggregator that attributes
+  all population figures to the Philippine Statistics Authority (PSA) 2020
+  Census.  The underlying statistical authority is PSA.  PSA OpenStat and
+  PSADA portals returned 403 errors at the time of access and could not be
+  queried directly.
+
+  Verification: Three individual barangay pages (Atabay, Funda-Dalipe,
+  San Pedro) were spot-checked against the municipality summary table and
+  matched exactly.  The 28-barangay total on PhilAtlas is 65,140, consistent
+  with the published PSA 2020 CPH municipal total for San Jose de Buenavista.
+  PhilAtlas does not publish PSGC codes; the adm4_pcode values in this file
+  are drawn from the PSA/OCHA/HDX admin boundary dataset acquired in Stage 2
+  (dataset_id phl_admin_boundaries) and cross-confirmed by a passing
+  snap_barangay_origins test that matches all 28 PSGCs to barangay polygons.
+
+  Limitation: Individual values have not been verified directly against an
+  official PSA OpenStat export.  If PSA OpenStat becomes accessible, retrieve
+  the barangay-level table for Region VI > Antique > San Jose de Buenavista
+  and compare per-barangay figures against this file.  Replace any discrepant
+  rows and update sha256, file_size_bytes, and validation_notes.
+
+  Re-acquisition instructions (authoritative primary source):
+    PSA OpenStat portal:
+      https://openstat.psa.gov.ph/PXWeb/pxweb/en/DB/DB__2A__CPH/
     1. Navigate to: Database > 2A (2020 CPH) > Population > Barangay level
-    2. Select Region: VI — Western Visayas (or filter to Antique Province)
-    3. Select all variables (population by sex, total)
-    4. Export table as Excel (.xlsx) — use "Download data" → "Excel"
-    5. Save to: data/raw/psa_barangay_population_2020_r06.xlsx
-    6. After placing the file, run: floodroute verify-dataset psa_barangay_population_2020_r06
-
-  Alternative: PSA 2020 CPH publication page at
-    https://psa.gov.ph/content/highlights-region-vi-western-visayas-population-2020-census-population-and-housing-2020-cph
-  may link to Excel tables for direct download without OpenStat navigation.
-
-  Note: PSA does not publish a stable direct-download URL for the barangay population
-  table. The OpenStat PX-Web interface provides interactive query and export.
-  PSADA (https://psada.psa.gov.ph/catalog/231) holds the Public Use File microdata
-  but requires registration and an access agreement letter to the National Statistician.
+    2. Select Region VI — Western Visayas; filter to Antique Province >
+       San Jose de Buenavista municipality
+    3. Export table as CSV or Excel
+    4. Extract the 28 barangay rows; confirm record count = 28 and sum = 65,140
+    5. Replace this file if values differ; update sha256, file_size_bytes,
+       acquisition_date, and validation_notes in this manifest
 
 source_agency: "Philippine Statistics Authority (PSA)"
-source_url: null           # No stable direct download URL; use OpenStat interactive export
+source_url: "https://www.philatlas.com/visayas/r06/antique/san-jose-de-buenavista.html"
 landing_page_url: "https://openstat.psa.gov.ph/PXWeb/pxweb/en/DB/DB__2A__CPH/"
 license_name: "Philippine Government Open Data"
 license_url: null          # No explicit CC license; attribution to PSA required
 
-access_method: manual_download
-acquisition_status: not_requested
-acquisition_date: null
+access_method: manual_download   # Researcher-transcribed from PhilAtlas secondary source
+acquisition_status: acquired
+acquisition_date: "2026-08-29"
 
 temporal_coverage: "2020"   # Reference date: May 1, 2020
-geographic_coverage: "Region VI — Western Visayas, Philippines (all barangays)"
-expected_format: excel
+geographic_coverage: "San Jose de Buenavista, Antique, Philippines — 28 barangays (PSGC PH0600613)"
+expected_format: csv
 
-local_path: "raw/psa_barangay_population_2020_r06.xlsx"
-file_size_bytes: null
-sha256: null
-crs: null                  # Tabular — no CRS; join to admin boundaries via PSGC
+local_path: "raw/psa_barangay_population_sjdb_2020.csv"
+file_size_bytes: 4387
+sha256: "a604b53ac4b4241dd28cc8f2a5b8f90f167a2fe4ad4311626e6e633be08f5abd"
+crs: null                  # Tabular — no CRS; join to admin boundaries via adm4_pcode
+
+record_count: 28
+validated_population_total: 65140
 
 provenance: observed
-validation_status: not_validated
+validation_status: partially_validated
 validation_notes: >
-  After download, validate:
-  1. File opens as a valid XLSX (xl/workbook.xml present in ZIP).
-  2. Identify the sheet containing barangay-level data (typically named by
-     region or labelled "Table 1" / "Barangay").
-  3. Confirm required columns are present: PSGC code (10-digit), barangay name,
-     municipality name, province name, total population, male, female.
-  4. Confirm San Jose de Buenavista (PSGC 060613000) appears as municipality.
-  5. Confirm all 28 barangays of San Jose de Buenavista are present with
-     non-zero population counts.
-  6. Cross-reference total for San Jose de Buenavista against published
-     PSA figure of 65,140 (2020 CPH).
-  Do not transform or impute values — retain nulls for missing barangay records.
+  Checks performed on psa_barangay_population_sjdb_2020.csv (2026-08-29):
+  1. Record count = 28 (confirmed: 28 rows excluding header).
+  2. All 28 adm4_pcode values are unique.
+  3. All adm4_pcode values carry prefix PH0600613 (San Jose de Buenavista).
+  4. All population_2020 values are positive integers (> 0).
+  5. Sum of all 28 population_2020 values = 65,140 — matches the PSA 2020 CPH
+     municipal total as reported by PhilAtlas and consistent with published
+     PSA figures.
+  6. PSGC codes span PH0600613001–PH0600613030 with 012 and 013 absent (28
+     codes); codes matched to admin boundary polygons in barangays_utm51n.gpkg
+     (all 28 PSGCs resolved, confirmed by passing test_all_28_snap_to_unique_nodes).
+  7. Population values transcribed from PhilAtlas municipality table and
+     spot-checked against three individual barangay pages (Atabay 2180,
+     Funda-Dalipe 7071, San Pedro 5750 — all matched).
 
-required_for_stage: 2
+  NOT validated: Individual per-barangay counts have not been verified directly
+  against an official PSA OpenStat export.  PhilAtlas is a secondary aggregator;
+  the underlying PSA primary table may differ in rounding or labelling.
+
+required_for_stage: 8
 citation: >
-  Philippine Statistics Authority (PSA). 2020 Census of Population and Housing
-  (2020 CPH), Region VI — Western Visayas, barangay-level population table.
-  Retrieved via PSA OpenStat (https://openstat.psa.gov.ph). Reference date:
-  May 1, 2020. Access date to be recorded on download.
+  Philippine Statistics Authority (PSA). 2020 Census of Population and
+  Housing (2020 CPH), barangay-level population, San Jose de Buenavista,
+  Antique Province, Region VI — Western Visayas. Reference date: May 1, 2020.
+  Values researcher-transcribed from PhilAtlas (https://www.philatlas.com/
+  visayas/r06/antique/san-jose-de-buenavista.html, accessed 2026-08-29), which
+  attributes all population data to the Philippine Statistics Authority.
+  PSA OpenStat (https://openstat.psa.gov.ph) is the recommended primary source
+  for verification.
