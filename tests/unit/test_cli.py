@@ -145,7 +145,7 @@ def test_acquire_dataset_unknown_id_exits_nonzero():
 
 
 def test_acquire_dataset_manual_method_prints_instructions():
-    """shelter dataset requires local_authority — CLI prints instructions, exits 0."""
+    """shelter dataset uses researcher_assembled — CLI prints instructions, exits 0."""
     if not MANIFESTS_DIR.is_dir():
         pytest.skip("data/manifests/ not found")
     result = runner.invoke(

@@ -69,6 +69,14 @@ def test_load_all_manifests_nonexistent_dir(tmp_path):
 # ---------------------------------------------------------------------------
 
 
+def test_researcher_assembled_access_method_accepted():
+    """researcher_assembled is a valid AccessMethod for researcher-curated registries."""
+    from floodroute.manifest import AccessMethod
+
+    assert AccessMethod.researcher_assembled == "researcher_assembled"
+    assert "researcher_assembled" in [m.value for m in AccessMethod]
+
+
 def test_invalid_category_rejected():
     from floodroute.manifest import load_manifest
 

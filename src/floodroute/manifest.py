@@ -40,6 +40,7 @@ class AccessMethod(StrEnum):
     formal_request = "formal_request"
     local_authority = "local_authority"
     derived_later = "derived_later"
+    researcher_assembled = "researcher_assembled"  # curated from public sources; no LGU data-sharing
 
 
 class DatasetCategory(StrEnum):

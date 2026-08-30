@@ -29,6 +29,11 @@ dev = [
     "pytest>=8.2",
     "ruff>=0.4",
 ]
+dashboard = [
+    "streamlit>=1.35",
+    "streamlit-folium>=0.20",
+    "folium>=0.16",
+]
 
 [project.scripts]
 floodroute = "floodroute.cli:app"

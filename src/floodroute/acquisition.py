@@ -28,6 +28,7 @@ _MANUAL = {
     AccessMethod.formal_request,
     AccessMethod.local_authority,
     AccessMethod.derived_later,
+    AccessMethod.researcher_assembled,  # curated registry; no automated download path
 }
 _CHUNK = 65_536  # 64 KiB
 
