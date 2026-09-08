@@ -1,0 +1,73 @@
+{
+  "experiment_id": "20260903T111933Z_da0a103d81d3",
+  "configuration_hash": "da0a103d81d3",
+  "created_utc": "2026-09-03T11:19:33.081969+00:00",
+  "saved_utc": "2026-09-03T11:19:33.872547+00:00",
+  "git_commit": "d862f3ba8c31c78142bd0f523d3afbd962a0905c",
+  "git_dirty": true,
+  "municipality": "PH0600613",
+  "algorithms": [
+    "A",
+    "B",
+    "B+",
+    "C"
+  ],
+  "return_periods": [
+    "RP100"
+  ],
+  "demand_fractions": [
+    0.25
+  ],
+  "capacity_multipliers": [
+    1.0
+  ],
+  "flood_penalties": [
+    "10.0"
+  ],
+  "nominal_capacities": {
+    "33": 12000,
+    "58": 10000
+  },
+  "pilot_mode": true,
+  "python_version": "3.13.9",
+  "networkx_version": "3.6.1",
+  "package_versions": {
+    "python": "3.13.9",
+    "networkx": "3.6.1",
+    "floodroute": "0.1.0"
+  },
+  "dataset_inventory": [
+    {
+      "role": "population_csv",
+      "path": "data/raw/psa_barangay_population_sjdb_2020.csv",
+      "sha256": "a604b53ac4b4241dd28cc8f2a5b8f90f167a2fe4ad4311626e6e633be08f5abd",
+      "exists": true
+    },
+    {
+      "role": "road_graph",
+      "path": "data/processed/hazard/PH0600613_phase_b_enriched.graphml",
+      "sha256": "ae567623861e7820a82d6c0662654c371565d424d49635b44789607c206f3c3e",
+      "exists": true
+    },
+    {
+      "role": "barangay_boundaries",
+      "path": "data/processed/admin/barangays_utm51n.gpkg",
+      "sha256": "b18c3af7155b35f34d3ace8c46b07f5b8355005172788355e18f893f4388b50b",
+      "exists": true
+    },
+    {
+      "role": "nodes_gpkg",
+      "path": "data/processed/graph/PH0600613_nodes.gpkg",
+      "sha256": "33c02a1be632c7f9141562539d7b50f5b06e5e2f526526b41aecf9cd9eca4640",
+      "exists": true
+    }
+  ],
+  "file_hashes": {
+    "dataset_inventory.json": "259df953e0dd94fc91bcf4ef95edc157922b863b9ec8e814c133f2146af2fff0",
+    "scenario_results.csv": "6401640cc493d38a130d290c9844c813e1b8978e7f98bf8afeba2f8bad663d4a",
+    "assignments.csv": "25d6c2d96645683a021d6f706bcce1ca915b4ec5a15566e2f224a81c7a8d3e97",
+    "route_metrics.csv": "72f9005466ceb9ade44ccfea1ff796958ec925254e585d4892245bc53d9b3727",
+    "facility_metrics.csv": "ddeabd6d82e131ee43154b23023106790540951d6518c5814bc08362c73b5630",
+    "unassigned_reasons.csv": "55693a03aacaa3a4e326ef3d5aa18d8250a7ffb0ecb8ef76ea6812822625bcb9"
+  }
+}

@@ -27,6 +27,7 @@ from dataclasses import dataclass
 import networkx as nx
 
 from floodroute.optimization.assignment import solve_assignment
+from floodroute.optimization.cost import FloodPolicy
 from floodroute.optimization.routing import compute_od_matrix
 
 ALGORITHMS: tuple[str, ...] = ("A", "B", "C")
@@ -71,6 +72,9 @@ class RunResult:
 
     runtime_s: float
     """Wall-clock seconds for routing + assignment."""
+
+    flood_penalty: FloodPolicy = 10.0
+    """Flood penalty policy used for this run (float multiplier or 'prohibited')."""
 
 
 def _ordinary_weight_fn():
@@ -131,6 +135,7 @@ def run_ordinary_nearest(
     demands: dict[int, int],
     capacities: dict[int, int],
     return_period: str = "RP100",
+    weight_fn=None,
 ) -> RunResult:
     """Algorithm A: ordinary nearest-shelter (length only, no capacity).
 
@@ -138,9 +143,13 @@ def run_ordinary_nearest(
     ``return_period`` parameter is accepted for interface uniformity; it
     does not affect routing but is recorded in the result for use when
     computing flood-exposure metrics post-hoc.
+
+    When ``weight_fn`` is not None, it is used instead of the default
+    ``_ordinary_weight_fn()``.  This allows hard road closures to be
+    applied even for Algorithm A.
     """
     t0 = time.perf_counter()
-    ordinary_wfn = _ordinary_weight_fn()
+    effective_wfn = weight_fn if weight_fn is not None else _ordinary_weight_fn()
 
     od_costs_ord: dict[tuple, float] = {}
     od_routes_ord: dict[tuple, list] = {}
@@ -148,7 +157,7 @@ def run_ordinary_nearest(
         if o not in G:
             continue
         try:
-            lengths, paths = nx.single_source_dijkstra(G, o, weight=ordinary_wfn)
+            lengths, paths = nx.single_source_dijkstra(G, o, weight=effective_wfn)
         except nx.NetworkXError:
             continue
         for s in capacities:
@@ -180,6 +189,8 @@ def run_flood_aware_nearest(
     demands: dict[int, int],
     capacities: dict[int, int],
     return_period: str = "RP100",
+    weight_fn=None,
+    flood_penalty: FloodPolicy = 10.0,
 ) -> RunResult:
     """Algorithm B: flood-aware nearest-shelter (no capacity).
 
@@ -193,7 +204,8 @@ def run_flood_aware_nearest(
 
     # Flood-aware OD matrix
     od_costs_flood, od_routes_flood = compute_od_matrix(
-        G, list(demands), list(capacities), return_period
+        G, list(demands), list(capacities), return_period, weight_fn=weight_fn,
+        flood_penalty=flood_penalty,
     )
     # Ordinary OD matrix (for detour ratio)
     od_costs_ord: dict[tuple, float] = {}
@@ -224,6 +236,7 @@ def run_flood_aware_nearest(
         od_costs_scenario=od_costs_flood,
         od_costs_ordinary=od_costs_ord,
         runtime_s=runtime_s,
+        flood_penalty=flood_penalty,
     )
 
 
@@ -232,6 +245,8 @@ def run_floodroute_assignment(
     demands: dict[int, int],
     capacities: dict[int, int],
     return_period: str = "RP100",
+    weight_fn=None,
+    flood_penalty: FloodPolicy = 10.0,
 ) -> RunResult:
     """Algorithm C: FloodRoute flood-aware min-cost-flow assignment.
 
@@ -244,7 +259,8 @@ def run_floodroute_assignment(
 
     # Flood-aware OD matrix
     od_costs_flood, od_routes_flood = compute_od_matrix(
-        G, list(demands), list(capacities), return_period
+        G, list(demands), list(capacities), return_period, weight_fn=weight_fn,
+        flood_penalty=flood_penalty,
     )
     # Ordinary OD matrix (for detour ratio)
     od_costs_ord: dict[tuple, float] = {}
@@ -273,4 +289,5 @@ def run_floodroute_assignment(
         od_costs_scenario=od_costs_flood,
         od_costs_ordinary=od_costs_ord,
         runtime_s=runtime_s,
+        flood_penalty=flood_penalty,
     )

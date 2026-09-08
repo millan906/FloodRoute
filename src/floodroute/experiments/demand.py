@@ -283,3 +283,80 @@ def build_demands(
         demands[node] = demands.get(node, 0) + d
 
     return demands, barangay_demand
+
+
+def build_demands_exact(
+    origins: list[BarangayOrigin],
+    exact_total: int,
+) -> tuple[dict[int, int], dict[str, int]]:
+    """Distribute an exact demand total proportionally by population.
+
+    Uses the same **largest-remainder method** (Hamilton method) as
+    ``build_demands``, but the target total is supplied directly rather
+    than derived from a fraction.
+
+    Parameters
+    ----------
+    origins:
+        Barangay origins to receive demand.
+    exact_total:
+        Non-negative integer total demand units to distribute.
+        Zero is allowed; all demands will be zero.
+
+    Returns
+    -------
+    demands : dict[int, int]
+        ``{origin_node: demand_units}`` aggregated by node.
+    barangay_demand : dict[str, int]
+        ``{adm4_pcode: demand_units}`` per-barangay audit trail.
+
+    Raises
+    ------
+    ValueError
+        If ``exact_total`` is negative.
+    """
+    if exact_total < 0:
+        raise ValueError(f"exact_total must be >= 0, got {exact_total}")
+
+    psgc_to_node: dict[str, int] = {o.psgc: o.origin_node for o in origins}
+
+    if exact_total == 0 or not origins:
+        barangay_demand: dict[str, int] = {o.psgc: 0 for o in origins}
+        demands: dict[int, int] = {}
+        for psgc, d in barangay_demand.items():
+            node = psgc_to_node[psgc]
+            demands[node] = demands.get(node, 0) + d
+        return demands, barangay_demand
+
+    total_population = sum(o.population_2020 for o in origins)
+    if total_population == 0:
+        return {}, {o.psgc: 0 for o in origins}
+
+    # Exact fractional share per barangay (rational arithmetic — no float drift).
+    target = Fraction(exact_total)
+    total_pop_frac = Fraction(total_population)
+    exact: dict[str, Fraction] = {
+        o.psgc: Fraction(o.population_2020) * target / total_pop_frac
+        for o in origins
+    }
+
+    # Floor allocation.
+    floor_alloc: dict[str, int] = {psgc: int(e) for psgc, e in exact.items()}
+    remainder_units = exact_total - sum(floor_alloc.values())
+
+    # Award remainders to barangays with largest fractional part; tie-break by PSGC.
+    ranked = sorted(
+        exact.items(),
+        key=lambda kv: (-(kv[1] - int(kv[1])), kv[0]),
+    )
+    barangay_demand = dict(floor_alloc)
+    for i in range(remainder_units):
+        barangay_demand[ranked[i][0]] += 1
+
+    # Aggregate by origin node.
+    demands = {}
+    for psgc, d in barangay_demand.items():
+        node = psgc_to_node[psgc]
+        demands[node] = demands.get(node, 0) + d
+
+    return demands, barangay_demand

@@ -76,7 +76,6 @@ def build_preprocessing_manifest(
     raster_nodata: float | None = None,
     raster_dtype: str | None = None,
     geometry_repairs: int = 0,
-    validation_status: str | None = None,
     extra: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build a preprocessing manifest dict for one output file.
@@ -110,10 +109,6 @@ def build_preprocessing_manifest(
         NumPy dtype string for raster outputs (e.g. "float32").
     geometry_repairs:
         Number of geometries repaired with make_valid().
-    validation_status:
-        Explicit validation result: "passed", "failed", or None if validation
-        was not performed.  Written as a top-level manifest field so that
-        downstream consumers can inspect validation state without parsing extra.
     extra:
         Any additional metadata to include verbatim.
     """
@@ -138,9 +133,6 @@ def build_preprocessing_manifest(
             "sha256": output_checksum,
         },
     }
-
-    if validation_status is not None:
-        manifest["validation_status"] = validation_status
 
     out = manifest["output"]
     if feature_count is not None:

@@ -26,6 +26,7 @@ import textwrap
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import rasterio
 import rasterio.crs
 import rasterio.mask
@@ -112,7 +113,9 @@ def build_dem_vrt(tile_paths: list[Path], vrt_path: Path) -> Path:
             f"DEM tiles have different CRS: {metas[0]['crs']} vs {metas[1]['crs']}"
         )
     if metas[0]["height"] != metas[1]["height"]:
-        raise DemProcessingError("DEM tiles have different row counts; cannot build east-west VRT.")
+        raise DemProcessingError(
+            "DEM tiles have different row counts; cannot build east-west VRT."
+        )
 
     # Combined mosaic dimensions
     total_width = metas[0]["width"] + metas[1]["width"]
@@ -124,7 +127,9 @@ def build_dem_vrt(tile_paths: list[Path], vrt_path: Path) -> Path:
     dtype = metas[0]["dtype"]
 
     # Relative paths from VRT file to tile files
-    rel_paths = [_relative_path(vrt_path, tp) for tp in tile_paths]
+    rel_paths = [
+        _relative_path(vrt_path, tp) for tp in tile_paths
+    ]
 
     vrt_xml = textwrap.dedent(f"""\
         <VRTDataset rasterXSize="{total_width}" rasterYSize="{total_height}">
@@ -136,24 +141,24 @@ def build_dem_vrt(tile_paths: list[Path], vrt_path: Path) -> Path:
             <SimpleSource>
               <SourceFilename relativeToVRT="1">{rel_paths[0]}</SourceFilename>
               <SourceBand>1</SourceBand>
-              <SourceProperties RasterXSize="{metas[0]["width"]}" \
-RasterYSize="{metas[0]["height"]}" DataType="{_gdal_dtype(dtype)}" \
+              <SourceProperties RasterXSize="{metas[0]['width']}" \
+RasterYSize="{metas[0]['height']}" DataType="{_gdal_dtype(dtype)}" \
 BlockXSize="512" BlockYSize="512" />
-              <SrcRect xOff="0" yOff="0" xSize="{metas[0]["width"]}" \
-ySize="{metas[0]["height"]}" />
-              <DstRect xOff="0" yOff="0" xSize="{metas[0]["width"]}" \
-ySize="{metas[0]["height"]}" />
+              <SrcRect xOff="0" yOff="0" xSize="{metas[0]['width']}" \
+ySize="{metas[0]['height']}" />
+              <DstRect xOff="0" yOff="0" xSize="{metas[0]['width']}" \
+ySize="{metas[0]['height']}" />
             </SimpleSource>
             <SimpleSource>
               <SourceFilename relativeToVRT="1">{rel_paths[1]}</SourceFilename>
               <SourceBand>1</SourceBand>
-              <SourceProperties RasterXSize="{metas[1]["width"]}" \
-RasterYSize="{metas[1]["height"]}" DataType="{_gdal_dtype(dtype)}" \
+              <SourceProperties RasterXSize="{metas[1]['width']}" \
+RasterYSize="{metas[1]['height']}" DataType="{_gdal_dtype(dtype)}" \
 BlockXSize="512" BlockYSize="512" />
-              <SrcRect xOff="0" yOff="0" xSize="{metas[1]["width"]}" \
-ySize="{metas[1]["height"]}" />
-              <DstRect xOff="{metas[0]["width"]}" yOff="0" \
-xSize="{metas[1]["width"]}" ySize="{metas[1]["height"]}" />
+              <SrcRect xOff="0" yOff="0" xSize="{metas[1]['width']}" \
+ySize="{metas[1]['height']}" />
+              <DstRect xOff="{metas[0]['width']}" yOff="0" \
+xSize="{metas[1]['width']}" ySize="{metas[1]['height']}" />
             </SimpleSource>
           </VRTRasterBand>
         </VRTDataset>
@@ -239,13 +244,15 @@ def clip_and_reproject_dem(
 
     if out_path.exists() and not force and not dry_run:
         raise OutputExistsError(
-            f"Output already exists: {out_path}. Pass force=True or --force to overwrite."
+            f"Output already exists: {out_path}. "
+            "Pass force=True or --force to overwrite."
         )
 
     resamp = _RESAMPLING_MAP.get(resampling)
     if resamp is None:
         raise DemProcessingError(
-            f"Unknown resampling method '{resampling}'. Choose from: {list(_RESAMPLING_MAP)}"
+            f"Unknown resampling method '{resampling}'. "
+            f"Choose from: {list(_RESAMPLING_MAP)}"
         )
 
     with rasterio.open(src_path) as src:

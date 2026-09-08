@@ -75,13 +75,13 @@ DEM_RESAMPLING: str = "bilinear"
 DEM_OUTPUT_NODATA: float = -9999.0
 
 # ---------------------------------------------------------------------------
-# Study-area bounds for output validation
+# Deterministic ordering
 # ---------------------------------------------------------------------------
 
-# Envelope covering all three study municipalities, WGS84 (west, south, east, north).
-# Derived from documented municipality extents in the acquisition manifest.
-# Used for post-write spatial-containment checks on EPSG:4326 outputs.
-STUDY_AREA_BOUNDS_WGS84: tuple[float, float, float, float] = (121.80, 10.55, 122.25, 10.90)
+# Sort municipalities by pcode before writing to ensure row-order determinism
+DETERMINISTIC_SORT_FIELD: str = "adm3_pcode"
+BARANGAY_SORT_FIELDS: list[str] = ["adm3_pcode", "adm4_pcode"]
+
 
 # Per-municipality WGS84 envelopes (west, south, east, north).
 # Source: dem_antique_municipalities.yaml tile-coverage analysis (2026-08-22).

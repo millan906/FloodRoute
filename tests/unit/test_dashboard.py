@@ -363,9 +363,10 @@ class TestStatusAvailability:
 class _FakeResult:
     """Minimal RunResult stand-in for unit testing."""
 
-    def __init__(self, assignments, od_costs_scenario):
+    def __init__(self, assignments, od_costs_scenario, capacities=None):
         self.assignments = assignments
         self.od_costs_scenario = od_costs_scenario
+        self.capacities = capacities or {}
         # routes not needed for format_origin_assignment_status
         self.routes = {}
 
@@ -397,18 +398,25 @@ class TestFormatOriginAssignmentStatus:
         result = _FakeResult(
             assignments={(1, 33): 100},
             od_costs_scenario={(1, 33): 100.0},
+            capacities={33: 100},
         )
         status = format_origin_assignment_status(99, result)
         assert status["status"] == "unreachable"
         assert status["shelter"] is None
         assert status["units"] == 0
-        assert "path" in status["reason"].lower() or "no path" in status["reason"].lower()
+        assert "route" in status["reason"].lower()
 
     def test_capacity_exhausted_origin_returns_unassigned(self):
-        # Origin 5 is reachable (in od_costs_scenario) but not assigned
+        # Origin 5 is reachable (in od_costs_scenario) but not assigned.
+        # Both shelters 33 and 58 are at capacity so the diagnostic assertion
+        # must not fire (no reachable shelter has remaining capacity).
         result = _FakeResult(
-            assignments={(1, 33): 100},  # origin 5 not here
-            od_costs_scenario={(1, 33): 100.0, (5, 33): 200.0, (5, 58): 300.0},
+            assignments={(1, 33): 100, (2, 58): 200},
+            od_costs_scenario={
+                (1, 33): 100.0, (2, 58): 150.0,
+                (5, 33): 200.0, (5, 58): 300.0,
+            },
+            capacities={33: 100, 58: 200},  # both shelters exactly at load
         )
         status = format_origin_assignment_status(5, result)
         assert status["status"] == "unassigned"
@@ -418,10 +426,13 @@ class TestFormatOriginAssignmentStatus:
 
     def test_zero_unit_assignment_is_treated_as_unassigned(self):
         # Assignment exists but units == 0 (should not occur in practice,
-        # but must not be classified as assigned)
+        # but must not be classified as assigned).
+        # Shelter 33 is filled to capacity by origin 1 so the assertion
+        # does not fire for origin 7.
         result = _FakeResult(
-            assignments={(7, 33): 0},
-            od_costs_scenario={(7, 33): 50.0},
+            assignments={(1, 33): 100, (7, 33): 0},
+            od_costs_scenario={(7, 33): 50.0, (1, 33): 30.0},
+            capacities={33: 100},  # shelter at capacity; no remaining space
         )
         # Zero-unit pair is in od_costs but has no positive assignment
         status = format_origin_assignment_status(7, result)

@@ -54,9 +54,13 @@ def _repair_geometries(gdf: Any) -> tuple[Any, int]:
         n = int(mask.sum())
         for idx in gdf.index[mask]:
             code = gdf.at[idx, "adm3_pcode"] if "adm3_pcode" in gdf.columns else str(idx)
-            logger.warning("Invalid geometry for %s at index %s — applying make_valid()", code, idx)
+            logger.warning(
+                "Invalid geometry for %s at index %s — applying make_valid()", code, idx
+            )
         gdf = gdf.copy()
-        gdf.loc[mask, "geometry"] = gdf.loc[mask, "geometry"].apply(lambda g: shapely.make_valid(g))
+        gdf.loc[mask, "geometry"] = gdf.loc[mask, "geometry"].apply(
+            lambda g: shapely.make_valid(g)
+        )
         repairs = n
     return gdf, repairs
 
@@ -112,7 +116,8 @@ def extract_municipalities(
 
     if output_path.exists() and not force and not dry_run:
         raise OutputExistsError(
-            f"Output already exists: {output_path}. Pass force=True or --force to overwrite."
+            f"Output already exists: {output_path}. "
+            "Pass force=True or --force to overwrite."
         )
 
     layer_path = _vsizip_layer(zip_path, "phl_admin3")
@@ -159,7 +164,9 @@ def extract_municipalities(
     }
 
     if dry_run:
-        logger.info("DRY RUN: would write %d municipalities to %s", len(selected), output_path)
+        logger.info(
+            "DRY RUN: would write %d municipalities to %s", len(selected), output_path
+        )
         return result
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -205,7 +212,8 @@ def extract_barangays(
 
     if output_path.exists() and not force and not dry_run:
         raise OutputExistsError(
-            f"Output already exists: {output_path}. Pass force=True or --force to overwrite."
+            f"Output already exists: {output_path}. "
+            "Pass force=True or --force to overwrite."
         )
 
     layer_path = _vsizip_layer(zip_path, "phl_admin4")
@@ -253,7 +261,9 @@ def extract_barangays(
     }
 
     if dry_run:
-        logger.info("DRY RUN: would write %d barangays to %s", len(selected), output_path)
+        logger.info(
+            "DRY RUN: would write %d barangays to %s", len(selected), output_path
+        )
         return result
 
     output_path.parent.mkdir(parents=True, exist_ok=True)

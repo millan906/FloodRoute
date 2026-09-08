@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import networkx as nx
 
-from floodroute.optimization.cost import make_weight_fn
+from floodroute.optimization.cost import FloodPolicy, make_weight_fn
 
 
 def compute_od_matrix(
@@ -21,6 +21,8 @@ def compute_od_matrix(
     origins: list,
     shelters: list,
     return_period: str = "RP100",
+    weight_fn=None,
+    flood_penalty: FloodPolicy = 10.0,
 ) -> tuple[dict[tuple, float], dict[tuple, list]]:
     """Flood-aware shortest-path costs and routes from every origin to every shelter.
 
@@ -36,6 +38,14 @@ def compute_od_matrix(
     return_period:
         Flood scenario for edge-cost computation: ``'RP10'``, ``'RP20'``,
         or ``'RP100'``.
+    weight_fn:
+        Optional weight function ``(u, v, d) -> float | None``.  When supplied,
+        it is used instead of the default flood-aware function derived from
+        *return_period*.  Intended for planner override integration.
+    flood_penalty:
+        Flood-penalty policy passed to ``make_weight_fn`` when *weight_fn* is
+        ``None``.  Float multiplier or ``"prohibited"`` (blocked edges).
+        Default ``10.0`` preserves backward-compatible behaviour.
 
     Returns
     -------
@@ -46,7 +56,8 @@ def compute_od_matrix(
         Ordered list of node IDs on the shortest path.  Only reachable pairs
         are included.
     """
-    weight_fn = make_weight_fn(return_period)
+    if weight_fn is None:
+        weight_fn = make_weight_fn(return_period, flood_penalty)
     shelter_set = set(shelters)
     od_costs: dict[tuple, float] = {}
     od_routes: dict[tuple, list] = {}

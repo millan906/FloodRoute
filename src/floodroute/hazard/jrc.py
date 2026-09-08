@@ -107,10 +107,9 @@ BAND_NAMES: list[str] = [
 BAND_INDEX: dict[str, int] = {name: i for i, name in enumerate(BAND_NAMES, 1)}
 DEPTH_BANDS: list[str] = ["RP10_depth", "RP20_depth", "RP100_depth"]
 
-# Band layout in the 5-band category GeoTIFF (acquired 2026-08-23 from EE)
+# Band layout in the optional 4-band category GeoTIFF
 CAT_BAND_NAMES: list[str] = [
     "RP10_depth_category",
-    "RP20_depth_category",
     "RP100_depth_category",
     "permanent_water_class",
     "spurious_depth_category",
@@ -122,14 +121,9 @@ NODATA_SENTINEL: float = -9999.0
 
 # Depth class thresholds (FloodRoute project analytical classes — NOT native JRC)
 # Adapted from Philippine flood hazard metadata for comparative analysis.
-#   no_modeled_inundation  depth < 0.10 m
-#   low                    0.10 m ≤ depth < 0.50 m
-#   medium                 0.50 m ≤ depth ≤ 1.50 m   (1.50 m inclusive)
-#   high                   depth > 1.50 m             (strictly above 1.50 m)
-DEPTH_CLASS_NO_INUNDATION_MAX_M: float = 0.10  # depth < this → no_modeled_inundation
 DEPTH_CLASS_LOW_MIN_M: float = 0.10  # [0.10, 0.50)
-DEPTH_CLASS_MEDIUM_MIN_M: float = 0.50  # [0.50, 1.50] inclusive
-DEPTH_CLASS_HIGH_MIN_M: float = 1.50  # > 1.50 (strictly above; 1.50 m → medium)
+DEPTH_CLASS_MEDIUM_MIN_M: float = 0.50  # [0.50, 1.50)
+DEPTH_CLASS_HIGH_MIN_M: float = 1.50  # [1.50, ∞)
 
 # ── Suitability gate thresholds (methodologically derived — see module doc) ──
 
@@ -140,9 +134,9 @@ MIN_INTERIOR_LEN_M: float = 5.0
 
 # ── Bridge / tunnel grade-separation sets (from config.py) ─────────────────
 
-BRIDGE_VALS: frozenset[str] = frozenset(
-    {"yes", "cantilever", "viaduct", "aqueduct", "movable", "trestle"}
-)
+BRIDGE_VALS: frozenset[str] = frozenset({
+    "yes", "cantilever", "viaduct", "aqueduct", "movable", "trestle"
+})
 TUNNEL_VALS: frozenset[str] = frozenset({"yes", "building_passage", "culvert"})
 
 # ── Acquisition parameters ─────────────────────────────────────────────────
@@ -497,21 +491,13 @@ def _is_tunnel(val: Any) -> bool:
 
 
 def _depth_class(depth_m: float) -> str:
-    """Return depth class for a non-permanent flooded pixel depth.
-
-    Classes (non-overlapping):
-      no_modeled_inundation  depth < 0.10 m
-      low                    0.10 ≤ depth < 0.50 m
-      medium                 0.50 ≤ depth ≤ 1.50 m  (1.50 m inclusive)
-      high                   depth > 1.50 m
-    """
-    if depth_m > DEPTH_CLASS_HIGH_MIN_M:
+    if depth_m >= DEPTH_CLASS_HIGH_MIN_M:
         return "high"
     if depth_m >= DEPTH_CLASS_MEDIUM_MIN_M:
         return "medium"
     if depth_m >= DEPTH_CLASS_LOW_MIN_M:
         return "low"
-    return "no_modeled_inundation"
+    return "none"
 
 
 def compute_road_exposure(
@@ -550,7 +536,8 @@ def compute_road_exposure(
     half = abs(tr.a) / 2
     xs_f, ys_f = rasterio.transform.xy(tr, rows_f, cols_f)
     flood_polys = [
-        shapely_box(x - half, y - half, x + half, y + half) for x, y in zip(xs_f, ys_f, strict=True)
+        shapely_box(x - half, y - half, x + half, y + half)
+        for x, y in zip(xs_f, ys_f, strict=True)
     ]
     depths_arr = depth[nonperm_mask].astype(float)
 
@@ -587,7 +574,9 @@ def compute_road_exposure(
             high_segments=0,
         )
 
-    flood_gdf = gpd.GeoDataFrame({"geometry": flood_polys, "depth": depths_arr}, crs="EPSG:4326")
+    flood_gdf = gpd.GeoDataFrame(
+        {"geometry": flood_polys, "depth": depths_arr}, crs="EPSG:4326"
+    )
 
     joined = gpd.sjoin(phys, flood_gdf, how="inner", predicate="intersects")
     candidate_idx = joined.index.unique()
@@ -657,9 +646,9 @@ def check_lipad_overlap(
 
     lipad_iso_bbox : (west, south, east, north) in WGS84 degrees.
     """
-    from pyproj import Geod  # noqa: PLC0415
     from shapely.geometry import box as shapely_box  # noqa: PLC0415
     from shapely.ops import nearest_points  # noqa: PLC0415
+    from pyproj import Geod  # noqa: PLC0415
 
     lipad_box = shapely_box(*lipad_iso_bbox)
     overlaps = lipad_box.intersects(municipality_geom)
@@ -668,14 +657,17 @@ def check_lipad_overlap(
         inter = lipad_box.intersection(municipality_geom)
         geod = Geod(ellps="WGS84")
         area_km2 = abs(geod.geometry_area_perimeter(inter)[0]) / 1e6
-        notes = f"LiPAD ISO extent overlaps municipality. Intersection area ≈ {area_km2:.1f} km²."
+        notes = (
+            f"LiPAD ISO extent overlaps municipality. "
+            f"Intersection area ≈ {area_km2:.1f} km²."
+        )
     else:
         p1, p2 = nearest_points(municipality_geom, lipad_box)
         geod = Geod(ellps="WGS84")
         _, _, dist = geod.inv(p1.x, p1.y, p2.x, p2.y)
         notes = (
             f"LiPAD ISO extent does NOT intersect municipality. "
-            f"Minimum distance: {dist / 1000:.1f} km. "
+            f"Minimum distance: {dist/1000:.1f} km. "
             f"LiPAD cannot substitute for this municipality."
         )
     return overlaps, notes
@@ -685,10 +677,8 @@ def check_lipad_overlap(
 
 # LiPAD Sibalom River ISO record extent (all three RP layers share this bbox)
 LIPAD_SIBALOM_ISO_BBOX: tuple[float, float, float, float] = (
-    122.32169450591898,
-    10.66699026999993,
-    122.4303543889997,
-    10.807655079784046,
+    122.32169450591898, 10.66699026999993,
+    122.4303543889997, 10.807655079784046,
 )
 
 # Tile-specific dry value (depth_category value for "modelled but not flooded")
@@ -751,7 +741,9 @@ def run_phase_a(
         raster_crs = str(src.crs)
         pixel_size_m = round(abs(src.transform.a) * 111000)
         bounds = tuple(src.bounds)
-        depth_data, tr = rasterio.mask.mask(src, [muni_geom], crop=True, nodata=NODATA_SENTINEL)
+        depth_data, tr = rasterio.mask.mask(
+            src, [muni_geom], crop=True, nodata=NODATA_SENTINEL
+        )
 
     dry_val = _DRY_VAL.get(municipality_pcode, 0)
     flood_vals = _FLOOD_VALS.get(municipality_pcode, {2, 3})
@@ -763,17 +755,17 @@ def run_phase_a(
 
     if cat_path is not None and cat_path.exists():
         with rasterio.open(cat_path) as src:
-            cat_data, _ = rasterio.mask.mask(src, [muni_geom], crop=True, nodata=NODATA_SENTINEL)
+            cat_data, _ = rasterio.mask.mask(
+                src, [muni_geom], crop=True, nodata=NODATA_SENTINEL
+            )
         # cat_data bands: RP10_cat(0), RP100_cat(1), perm_water(2), spurious(3)
         pw_cat = cat_data[2].astype(float)
         sd_cat = cat_data[3].astype(float)
 
         for rp, cat_idx, depth_idx in [("RP10", 0, 0), ("RP100", 1, 2)]:
             pc = _pixel_categories(
-                depth_data,
-                cat_data,
-                pw_cat,
-                sd_cat,
+                depth_data, cat_data,
+                pw_cat, sd_cat,
                 return_period=rp,
                 depth_band_idx=depth_idx,
                 cat_band_idx=cat_idx,
@@ -800,19 +792,11 @@ def run_phase_a(
 
     # 6. Road exposure
     road_exp: dict[str, RoadExposure] | None = None
-    if (
-        edges_path is not None
-        and edges_path.exists()
-        and cat_path is not None
-        and cat_path.exists()
-    ):
+    if edges_path is not None and edges_path.exists() and cat_path is not None and cat_path.exists():
         road_exp = {}
         for rp, cat_idx, depth_idx in [("RP10", 0, 0), ("RP100", 1, 2)]:
             road_exp[rp] = compute_road_exposure(
-                raster_path,
-                cat_path,
-                muni_geom,
-                edges_path,
+                raster_path, cat_path, muni_geom, edges_path,
                 return_period=rp,
                 depth_band_idx=depth_idx,
                 cat_band_idx=cat_idx,
@@ -821,7 +805,9 @@ def run_phase_a(
             )
 
     # 7. LiPAD check
-    lipad_overlaps, lipad_notes = check_lipad_overlap(muni_geom, LIPAD_SIBALOM_ISO_BBOX)
+    lipad_overlaps, lipad_notes = check_lipad_overlap(
+        muni_geom, LIPAD_SIBALOM_ISO_BBOX
+    )
 
     # 8. Suitability decision
     reasons: list[str] = []
@@ -839,8 +825,8 @@ def run_phase_a(
     if n_nonperm_10 == 0:
         decision = ReadinessDecision.BLOCKED
         reasons.append(
-            "Zero non-permanent flood pixels at RP10 within municipality boundary. "
-            "JRC GloFAS produces no over-bank inundation signal for this area."
+            f"Zero non-permanent flood pixels at RP10 within municipality boundary. "
+            f"JRC GloFAS produces no over-bank inundation signal for this area."
         )
     elif not has_cat:
         decision = ReadinessDecision.PARTIAL

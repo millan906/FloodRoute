@@ -348,7 +348,7 @@ def _process_way_data(
     osm_id: int,
     road_tags: dict[str, Any] | None,
     waterway_tags: dict[str, Any] | None,
-    wkb_bytes: bytes | str | None,
+    wkb_bytes: bytes | None,
     geom_error: str | None,
     muni_buffers: dict[str, BaseGeometry],
     union_bounds: tuple[float, float, float, float],
@@ -390,12 +390,7 @@ def _process_way_data(
         # Already counted by the caller (incomplete_location or invalid_geom).
         return
 
-    # Parse WKB with shapely.
-    # pyosmium WKBFactory.create_linestring() returns a hex-encoded string in
-    # pyosmium 4.x.  shapely.from_wkb() (shapely 2.x) auto-detects the
-    # format: str → hex-WKB, bytes → binary WKB.  Both paths are exercised:
-    # live osmium passes hex strings; unit tests pass binary bytes via
-    # shapely.to_wkb().
+    # Parse WKB with shapely
     try:
         geom: BaseGeometry = shapely.from_wkb(wkb_bytes)
     except Exception:
@@ -630,13 +625,11 @@ def extract_osm_features(
             if is_waterway:
                 ww_tags = _copy_waterway_tags(osm_id, waterway_val, w.tags)  # type: ignore[arg-type]
 
-            wkb_bytes: str | None = None
+            wkb_bytes: bytes | None = None
             geom_error: str | None = None
             try:
-                # WKBFactory.create_linestring() returns a hex-encoded WKB
-                # string in pyosmium 4.x.  Store it directly; _process_way_data
-                # detects the type and passes hex=True to shapely.from_wkb.
-                wkb_bytes = wkbfab.create_linestring(w)
+                raw = wkbfab.create_linestring(w)
+                wkb_bytes = bytes(raw)
             except Exception as exc:
                 geom_error = str(exc)
                 err_lower = geom_error.lower()

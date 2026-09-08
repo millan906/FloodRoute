@@ -1,9 +1,10 @@
 """Unit tests for the potential facilities registry.
 
 Tests cover:
-  - Registry completeness (exactly 4 records)
+  - Registry completeness (exactly 5 records)
   - SJDB-001 field values against CSV source
   - Coordinate absence for SJDB-002/003/004
+  - SJDB-005 OSM-sourced record fields
   - ``eligible_for_optimization`` invariants (all False)
   - ``can_be_scenario_activated`` (True only for SJDB-001)
   - FacilityRecord immutability (frozen dataclass)
@@ -30,8 +31,8 @@ from floodroute.dashboard.facilities import (
 # ---------------------------------------------------------------------------
 
 
-def test_registry_has_exactly_four_records():
-    assert len(FACILITY_REGISTRY) == 4
+def test_registry_has_exactly_five_records():
+    assert len(FACILITY_REGISTRY) == 5
 
 
 def test_all_facility_ids_unique():
@@ -41,7 +42,7 @@ def test_all_facility_ids_unique():
 
 def test_expected_facility_ids_present():
     ids = {f.facility_id for f in FACILITY_REGISTRY}
-    assert ids == {"SJDB-001", "SJDB-002", "SJDB-003", "SJDB-004"}
+    assert ids == {"SJDB-001", "SJDB-002", "SJDB-003", "SJDB-004", "SJDB-005"}
 
 
 # ---------------------------------------------------------------------------
@@ -203,7 +204,7 @@ def test_sjdb004_designation(sjdb004):
 
 
 def test_all_facilities_ineligible_for_optimization():
-    """All four registry records must be ineligible for optimization."""
+    """All five registry records must be ineligible for optimization."""
     for fac in FACILITY_REGISTRY:
         assert fac.eligible_for_optimization is False, (
             f"{fac.facility_id} unexpectedly eligible"
@@ -250,6 +251,11 @@ def test_sjdb004_cannot_be_scenario_activated(sjdb004):
 
 
 def test_only_sjdb001_can_be_activated():
+    """SJDB-001 is the only record with both entrance coords and a snapped node.
+
+    SJDB-005 has a snapped_node_id (centroid reference) but no entrance coords,
+    so can_be_scenario_activated is False for it too.
+    """
     activatable = [f for f in FACILITY_REGISTRY if f.can_be_scenario_activated]
     assert [f.facility_id for f in activatable] == ["SJDB-001"]
 
@@ -286,7 +292,7 @@ def test_get_facility_by_id_returns_none_for_unknown():
 
 
 def test_get_facility_by_id_all_ids():
-    for expected_id in ("SJDB-001", "SJDB-002", "SJDB-003", "SJDB-004"):
+    for expected_id in ("SJDB-001", "SJDB-002", "SJDB-003", "SJDB-004", "SJDB-005"):
         fac = get_facility_by_id(expected_id)
         assert fac is not None
         assert fac.facility_id == expected_id
@@ -310,6 +316,92 @@ def test_all_records_have_source_date():
 def test_all_records_have_designation_source():
     for fac in FACILITY_REGISTRY:
         assert fac.designation_source, f"{fac.facility_id} missing designation_source"
+
+
+# ---------------------------------------------------------------------------
+# SJDB-005 — OSM-sourced candidate (Funda-Dalipe Barangay Evacuation Center)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def sjdb005() -> FacilityRecord:
+    fac = get_facility_by_id("SJDB-005")
+    assert fac is not None
+    return fac
+
+
+def test_sjdb005_name(sjdb005):
+    assert sjdb005.facility_name == "Funda-Dalipe Barangay Evacuation Center"
+
+
+def test_sjdb005_barangay(sjdb005):
+    assert sjdb005.barangay_name == "Funda-Dalipe"
+
+
+def test_sjdb005_type(sjdb005):
+    assert sjdb005.facility_type == "evacuation_center"
+
+
+def test_sjdb005_has_coordinates(sjdb005):
+    """SJDB-005 has OSM-derived centroid coordinates."""
+    assert sjdb005.has_coordinates is True
+    assert sjdb005.latitude == pytest.approx(10.76385, abs=1e-5)
+    assert sjdb005.longitude == pytest.approx(121.93830, abs=1e-5)
+
+
+def test_sjdb005_no_entrance(sjdb005):
+    """SJDB-005 has no entrance coordinates documented."""
+    assert sjdb005.has_entrance is False
+    assert sjdb005.entrance_lat is None
+    assert sjdb005.entrance_lon is None
+    assert sjdb005.entrance_status == "missing"
+
+
+def test_sjdb005_designation(sjdb005):
+    """SJDB-005 is candidate_only — OSM name alone is not a designation document."""
+    assert sjdb005.designation_type == "candidate_only"
+
+
+def test_sjdb005_operational_status(sjdb005):
+    assert sjdb005.operational_status == "unknown"
+
+
+def test_sjdb005_evidence_tier(sjdb005):
+    assert sjdb005.evidence_tier == "C"
+
+
+def test_sjdb005_snap_reference(sjdb005):
+    """SJDB-005 centroid-to-node reference: node 593 at 46 m."""
+    assert sjdb005.snapped_node_id == 593
+    assert sjdb005.snap_distance_m == pytest.approx(46.0, abs=0.1)
+    assert sjdb005.snap_is_pipeline_result is False
+
+
+def test_sjdb005_cannot_be_scenario_activated(sjdb005):
+    """SJDB-005 has a node reference but no entrance coords — cannot activate."""
+    assert sjdb005.can_be_scenario_activated is False
+
+
+def test_sjdb005_not_eligible_for_optimization(sjdb005):
+    assert sjdb005.eligible_for_optimization is False
+
+
+def test_sjdb005_no_official_capacity(sjdb005):
+    assert sjdb005.official_capacity is None
+
+
+def test_sjdb005_source_is_osm(sjdb005):
+    assert "OpenStreetMap" in sjdb005.source_title
+    assert "12884911346" in sjdb005.source_title
+
+
+def test_sjdb005_no_source_url(sjdb005):
+    """OSM node URL is not stored — referenced by element ID in source_title."""
+    assert sjdb005.source_url is None
+
+
+def test_sjdb005_no_issuing_office(sjdb005):
+    assert sjdb005.issuing_office is None
 
 
 # ---------------------------------------------------------------------------

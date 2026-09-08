@@ -1,1 +1,1 @@
-"""floodroute.graph — Stage 4 road-graph construction."""
+"""floodroute.graph — placeholder package (Stage 0)."""

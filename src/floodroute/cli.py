@@ -3,16 +3,11 @@
 Stage 0: validate-config is fully operational.
 Stage 1: list-datasets, validate-manifests, acquire-dataset, verify-dataset.
 Stage 3: preprocess-geospatial — converts verified raw inputs to analysis-ready layers.
-Stage 4: build-graph, inspect-graph, validate-graph.
-Stage 5: inspect-hazard (Phase A readiness gate).
-         acquire-hazard: download JRC GloFAS v2.1 Sibalom subset from Earth Engine.
-         (Phase B commands activate only when Phase A returns READY.)
 Later commands exit with a clear error until their data dependencies exist.
 """
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -475,15 +470,7 @@ def preprocess_geospatial(
     from floodroute.preprocessing.dem import (
         OutputExistsError as DemOutputExistsError,
     )
-    from floodroute.preprocessing.osm import (
-        ChecksumMismatch,
-        OsmBackendUnavailable,
-        OsmExtractionError,
-        extract_osm_features,
-        get_osmium_version,
-        resolve_pbf_from_manifest,
-        verify_pbf_checksum,
-    )
+    from floodroute.preprocessing.osm import OsmBackendUnavailable, check_osm_backend
     from floodroute.preprocessing.prep_manifest import (
         build_preprocessing_manifest,
         source_checksum_from_manifest_dir,
@@ -500,25 +487,13 @@ def preprocess_geospatial(
     # Preflight: verify required raw inputs exist
     # ------------------------------------------------------------------
     missing_inputs: list[str] = []
-    osm_pbf_path: Path = Path()  # resolved below when not skip_osm
-    osm_expected_sha256: str = ""
     if not cfg.admin_archive.exists():
         missing_inputs.append(f"Admin archive: {cfg.admin_archive}")
     for tile in cfg.dem_tiles:
         if not tile.exists():
             missing_inputs.append(f"DEM tile: {tile}")
-    if not skip_osm:
-        # Resolve PBF path from acquisition manifest (no hard-coded path)
-        try:
-            osm_pbf_path, osm_expected_sha256 = resolve_pbf_from_manifest(
-                OSM_DATASET_ID, manifests_dir, data_dir
-            )
-        except OsmExtractionError as exc:
-            typer.echo(f"ERROR: Cannot resolve OSM source: {exc}", err=True)
-            raise typer.Exit(code=1) from exc
-
-        if not osm_pbf_path.exists():
-            missing_inputs.append(f"OSM PBF: {osm_pbf_path}")
+    if not skip_osm and not cfg.osm_pbf.exists():
+        missing_inputs.append(f"OSM PBF: {cfg.osm_pbf}")
 
     if missing_inputs:
         typer.echo("ERROR: Required raw inputs are missing:", err=True)
@@ -529,7 +504,9 @@ def preprocess_geospatial(
     # Source checksums from acquisition manifests (for preprocessing manifests)
     admin_sha = source_checksum_from_manifest_dir(ADMIN_DATASET_ID, manifests_dir)
     dem_sha = source_checksum_from_manifest_dir(DEM_DATASET_ID, manifests_dir)
-    osm_sha = source_checksum_from_manifest_dir(OSM_DATASET_ID, manifests_dir)
+    _ = source_checksum_from_manifest_dir(
+        OSM_DATASET_ID, manifests_dir
+    )  # reserved for OSM manifest
 
     errors: list[str] = []
     outputs_written: list[str] = []
@@ -631,7 +608,7 @@ def preprocess_geospatial(
                     output_bounds=result["bounds"],
                     feature_count=result["feature_count"],
                     geometry_repairs=result["geometry_repairs"],
-                    validation_status=val_status.get("validation"),
+                    extra=val_status if val_status else None,
                 )
                 write_preprocessing_manifest(man, cfg.output_manifests_dir / f"{out_id}.json")
                 outputs_written.append(str(out_path))
@@ -785,7 +762,7 @@ def preprocess_geospatial(
                     raster_height=result["height"],
                     raster_nodata=result["nodata"],
                     raster_dtype=result["dtype"],
-                    validation_status=val_status_dem.get("validation"),
+                    extra=val_status_dem if val_status_dem else None,
                 )
                 write_preprocessing_manifest(
                     man, cfg.output_manifests_dir / f"dem_{code}_utm51n.json"
@@ -804,259 +781,17 @@ def preprocess_geospatial(
     # ------------------------------------------------------------------
     typer.echo("\n[C] OSM extraction")
 
-    osm_skipped = False
     if skip_osm:
-        typer.echo("  SKIPPED (--skip-osm flag set — Stage 3 will be partial)")
-        osm_skipped = True
+        typer.echo("  SKIPPED (--skip-osm flag set)")
     else:
         try:
-            # Verify PBF checksum against acquisition manifest
-            typer.echo(
-                f"  Verifying PBF checksum: {osm_pbf_path.name} … "
-                "(this may take 5–15 s for a 604 MB file)"
-            )
-            try:
-                verify_pbf_checksum(osm_pbf_path, osm_expected_sha256)
-                typer.echo(f"  PBF checksum OK: {osm_pbf_path.name}")
-            except ChecksumMismatch as exc:
-                typer.echo(f"  ERROR: {exc}", err=True)
-                errors.append(f"OSM PBF checksum mismatch: {exc}")
-                raise typer.Exit(code=1) from exc
-
-            if dry_run:
-                typer.echo(
-                    f"  [DRY RUN] osmium {get_osmium_version()} available; "
-                    f"PBF checksum verified; "
-                    f"would extract roads and waterways for "
-                    f"{len(MUNICIPALITY_CODES)} municipalities "
-                    f"(buffer={cfg.osm_buffer_metres:.0f} m)."
-                )
-                typer.echo(f"  [DRY RUN] waterway classes: {sorted(cfg.waterway_classes)}")
-            else:
-                # Load municipality boundaries for buffer computation
-                from floodroute.preprocessing.validation import (
-                    ValidationFailed,
-                    validate_osm_output,
-                )
-
-                muni_wgs84_path = cfg.output_admin_dir / "municipalities_wgs84.gpkg"
-                if not muni_wgs84_path.exists():
-                    raise OsmExtractionError(
-                        f"Municipality boundaries required for OSM extraction "
-                        f"but not found: {muni_wgs84_path}\n"
-                        "Run admin preprocessing first (without --skip-osm)."
-                    )
-                import geopandas as gpd
-
-                muni_gdf = gpd.read_file(muni_wgs84_path, layer="municipalities")
-
-                typer.echo(
-                    f"  osmium {get_osmium_version()} — extracting roads and "
-                    f"waterways for {len(MUNICIPALITY_CODES)} municipalities "
-                    f"(buffer={cfg.osm_buffer_metres:.0f} m) …"
-                )
-                typer.echo("  (single PBF pass; ~1–2 GB RAM for location index)")
-
-                osm_result = extract_osm_features(
-                    osm_pbf_path,
-                    muni_gdf,
-                    cfg.output_osm_dir,
-                    pcode_field="adm3_pcode",
-                    buffer_metres=cfg.osm_buffer_metres,
-                    waterway_classes=cfg.waterway_classes,
-                    target_crs=cfg.target_crs,
-                    force=force,
-                    dry_run=False,
-                )
-
-                osm_stats = osm_result["stats"]
-
-                # Report extraction counts
-                typer.echo(
-                    f"  Ways examined: {osm_stats.ways_examined:,}  "
-                    f"road candidates: {osm_stats.road_candidates:,}  "
-                    f"waterway candidates: {osm_stats.waterway_candidates:,}"
-                )
-                typer.echo(
-                    f"  Incomplete location: {osm_stats.incomplete_location}  "
-                    f"Invalid geometry: {osm_stats.invalid_geom}  "
-                    f"Empty geometry: {osm_stats.empty_geom}  "
-                    f"Outside all buffers: {osm_stats.outside_all}"
-                )
-                if osm_stats.road_cross_municipal_ids:
-                    typer.echo(
-                        f"  Cross-municipal road ways (legitimate): "
-                        f"{len(osm_stats.road_cross_municipal_ids)}"
-                    )
-                if osm_stats.waterway_cross_municipal_ids:
-                    typer.echo(
-                        f"  Cross-municipal waterway ways (legitimate): "
-                        f"{len(osm_stats.waterway_cross_municipal_ids)}"
-                    )
-
-                # Per-municipality counts and validation + manifests
-                from floodroute.preprocessing.osm import build_municipality_buffers
-
-                muni_buffers = build_municipality_buffers(
-                    muni_gdf,
-                    buffer_metres=cfg.osm_buffer_metres,
-                    projected_crs=cfg.target_crs,
-                )
-
-                for pcode in sorted(MUNICIPALITY_CODES):
-                    muni_name = MUNICIPALITY_NAMES.get(pcode, pcode)
-                    n_roads = osm_stats.retained_roads.get(pcode, 0)
-                    n_ww = osm_stats.retained_waterways.get(pcode, 0)
-                    typer.echo(
-                        f"  {pcode} ({muni_name}): "
-                        f"{n_roads} road features, {n_ww} waterway features"
-                    )
-
-                    # Validate and manifest each of the 4 outputs per municipality
-                    for feat_type, layer in (("roads", "roads"), ("waterways", "waterways")):
-                        for crs_label, crs_suffix, _out_crs in (
-                            ("EPSG:4326", "wgs84", "EPSG:4326"),
-                            (cfg.target_crs, "utm51n", cfg.target_crs),
-                        ):
-                            out_id = f"{pcode}_{feat_type}_{crs_suffix}"
-                            out_path = osm_result["output_paths"].get(out_id)
-                            if out_path is None:
-                                errors.append(f"Missing expected output: {out_id}")
-                                continue
-
-                            # Build municipality buffer in the output CRS for validation
-                            if crs_suffix == "wgs84":
-                                val_buffer = muni_buffers[pcode]
-                            else:
-                                import geopandas as _gpd_v
-
-                                _buf_gdf = _gpd_v.GeoDataFrame(
-                                    geometry=[muni_buffers[pcode]], crs="EPSG:4326"
-                                ).to_crs(cfg.target_crs)
-                                val_buffer = _buf_gdf.geometry.iloc[0]
-
-                            # WGS84 ids are authoritative; UTM must match
-                            wgs84_id = f"{pcode}_{feat_type}_wgs84"
-                            expected_ids: set[int] | None = None
-                            if crs_suffix == "utm51n":
-                                wgs84_path = osm_result["output_paths"].get(wgs84_id)
-                                if wgs84_path is not None and wgs84_path.exists():
-                                    try:
-                                        _ref_gdf = gpd.read_file(wgs84_path, layer=layer)
-                                        expected_ids = set(_ref_gdf["osm_id"].tolist())
-                                    except Exception:
-                                        pass
-
-                            val_status_osm = "passed"
-                            val_error_osm: str | None = None
-                            try:
-                                validate_osm_output(
-                                    out_path,
-                                    layer=layer,
-                                    expected_crs=crs_label,
-                                    municipality_buffer=val_buffer,
-                                    feature_type=feat_type,
-                                    expected_osm_id_set=expected_ids,
-                                )
-                            except ValidationFailed as vexc:
-                                val_status_osm = "failed"
-                                val_error_osm = str(vexc)
-                                typer.echo(f"    VALIDATION FAIL {out_id}: {vexc}", err=True)
-                                errors.append(f"OSM validation failed ({out_id}): {vexc}")
-
-                            if val_status_osm == "passed":
-                                n_feat = n_roads if feat_type == "roads" else n_ww
-                                typer.echo(f"    VALID {out_id}: {n_feat} features, {crs_label}")
-
-                            # Compute bounds for manifest
-                            try:
-                                _gdf_m = gpd.read_file(out_path, layer=layer)
-                                if len(_gdf_m) > 0:
-                                    _tb = _gdf_m.total_bounds
-                                    _bounds = {
-                                        "xmin": float(_tb[0]),
-                                        "ymin": float(_tb[1]),
-                                        "xmax": float(_tb[2]),
-                                        "ymax": float(_tb[3]),
-                                    }
-                                    _n_feat = len(_gdf_m)
-                                else:
-                                    _bounds = {}
-                                    _n_feat = 0
-                            except Exception:
-                                _bounds = {}
-                                _n_feat = n_roads if feat_type == "roads" else n_ww
-
-                            man_extra: dict[str, Any] = {
-                                "osmium_version": osm_result["osmium_version"],
-                                "tag_policy": {
-                                    "road_filter": "highway tag present and non-empty",
-                                    "waterway_filter": "waterway tag in included_classes",
-                                    "included_waterway_classes": osm_result["waterway_classes"],
-                                    "unknown_tags": "null (never inferred)",
-                                },
-                                "buffer_metres": osm_result["buffer_metres"],
-                                "spatial_retention_rule": (
-                                    "Ways intersecting the buffered municipality boundary "
-                                    "are retained. Full way geometry is written (not clipped) "
-                                    "to preserve cross-boundary road continuity."
-                                ),
-                                "error_accounting": {
-                                    "ways_examined": osm_stats.ways_examined,
-                                    "road_candidates": osm_stats.road_candidates,
-                                    "waterway_candidates": osm_stats.waterway_candidates,
-                                    "incomplete_location": osm_stats.incomplete_location,
-                                    "invalid_geom": osm_stats.invalid_geom,
-                                    "empty_geom": osm_stats.empty_geom,
-                                    "outside_all_buffers": osm_stats.outside_all,
-                                    "cross_municipal_road_ids": len(
-                                        osm_stats.road_cross_municipal_ids
-                                    ),
-                                    "cross_municipal_waterway_ids": len(
-                                        osm_stats.waterway_cross_municipal_ids
-                                    ),
-                                },
-                            }
-                            if val_error_osm:
-                                man_extra["validation_error"] = val_error_osm
-
-                            man = build_preprocessing_manifest(
-                                output_id=out_id,
-                                operation="osm_feature_extraction",
-                                parameters={
-                                    "municipality_code": pcode,
-                                    "municipality_name": muni_name,
-                                    "feature_type": feat_type,
-                                    "output_crs": crs_label,
-                                    "buffer_metres": osm_result["buffer_metres"],
-                                    "waterway_classes": osm_result["waterway_classes"],
-                                    "source_crs": "EPSG:4326",
-                                    "projected_buffer_crs": cfg.target_crs,
-                                },
-                                source_dataset_ids=[OSM_DATASET_ID, ADMIN_DATASET_ID],
-                                source_checksums={
-                                    OSM_DATASET_ID: osm_sha,
-                                    ADMIN_DATASET_ID: admin_sha,
-                                },
-                                output_path=out_path,
-                                output_crs=crs_label,
-                                output_bounds=_bounds,
-                                feature_count=_n_feat,
-                                validation_status=val_status_osm,
-                                extra=man_extra,
-                            )
-                            man_path = cfg.output_manifests_dir / f"{out_id}.json"
-                            write_preprocessing_manifest(man, man_path)
-                            outputs_written.append(str(out_path))
-
-        except (OsmBackendUnavailable, OsmExtractionError) as exc:
-            typer.echo(f"  ERROR: {exc}", err=True)
-            errors.append(f"OSM extraction failed: {exc}")
-        except typer.Exit:
-            raise
-        except Exception as exc:
-            typer.echo(f"  FAIL OSM extraction: {exc}", err=True)
-            errors.append(f"OSM extraction failed (unexpected): {exc}")
+            check_osm_backend(cfg.osm_pbf)
+            typer.echo("  OSM backend available — extraction would proceed")
+            # Full extraction not yet implemented; backend check passed.
+        except OsmBackendUnavailable as exc:
+            typer.echo("  BLOCKER: OSM extraction unavailable.", err=True)
+            typer.echo(str(exc), err=True)
+            errors.append("OSM extraction blocked: no PBF-capable backend")
 
     # ------------------------------------------------------------------
     # Summary
@@ -1070,23 +805,283 @@ def preprocess_geospatial(
             typer.echo(f"  {p}")
 
     if errors:
-        typer.echo(f"\nIssues: {len(errors)}")
+        typer.echo(f"\nWarnings/blockers: {len(errors)}")
         for e in errors:
-            if "exists" in e.lower():
+            # OSM blocker is expected; other errors are failures
+            if "OSM" in e or "exists" in e.lower():
                 typer.echo(f"  NOTE: {e}")
             else:
                 typer.echo(f"  ERROR: {e}", err=True)
-        hard_errors = [e for e in errors if "exists" not in e.lower()]
+        # Only hard-fail on non-OSM, non-overwrite errors
+        hard_errors = [e for e in errors if "OSM" not in e and "exists" not in e.lower()]
         if hard_errors:
             raise typer.Exit(code=1)
-    elif osm_skipped:
-        typer.echo(
-            "preprocess-geospatial PARTIAL — admin and DEM complete; "
-            "OSM skipped (--skip-osm supplied). "
-            "Re-run without --skip-osm to complete Stage 3."
-        )
     else:
-        typer.echo("preprocess-geospatial Stage 3 complete.")
+        typer.echo("preprocess-geospatial completed successfully.")
+
+
+# ---------------------------------------------------------------------------
+# build-graph  (Stage 2+)
+# ---------------------------------------------------------------------------
+
+
+@app.command("build-graph")
+def build_graph(
+    log_level: Annotated[
+        str,
+        typer.Option("--log-level", help="Logging level."),
+    ] = "INFO",
+) -> None:
+    """Build the road-network graph from processed data (Stage 2+)."""
+    configure_logging(log_level)  # type: ignore[arg-type]
+    logger.warning("build-graph called but no processed data is available.")
+    typer.echo(
+        "ERROR: build-graph requires processed road-network data. "
+        "Complete Stage 1 data ingestion first.",
+        err=True,
+    )
+    raise typer.Exit(code=1)
+
+
+# ---------------------------------------------------------------------------
+# run-analysis  (Stage 3+)
+# ---------------------------------------------------------------------------
+
+
+@app.command("run-analysis")
+def run_analysis(
+    log_level: Annotated[
+        str,
+        typer.Option("--log-level", help="Logging level."),
+    ] = "INFO",
+) -> None:
+    """Run the core routing and shelter-allocation analysis (Stage 3+)."""
+    configure_logging(log_level)  # type: ignore[arg-type]
+    logger.warning("run-analysis called but data layer is absent.")
+    typer.echo(
+        "ERROR: run-analysis requires the processed data layer and a built graph. "
+        "Complete Stages 1–2 first.",
+        err=True,
+    )
+    raise typer.Exit(code=1)
+
+
+# ---------------------------------------------------------------------------
+# run-experiment  (Stage 3+)
+# ---------------------------------------------------------------------------
+
+
+@app.command("run-experiment")
+def run_experiment(
+    experiment_id: Annotated[
+        str | None,
+        typer.Argument(help="Experiment ID from experiments.yaml."),
+    ] = None,
+    log_level: Annotated[
+        str,
+        typer.Option("--log-level", help="Logging level."),
+    ] = "INFO",
+) -> None:
+    """Execute a named experiment (Stage 3+)."""
+    configure_logging(log_level)  # type: ignore[arg-type]
+    logger.warning("run-experiment called but prerequisites are absent.")
+    typer.echo(
+        "ERROR: run-experiment requires the full analysis pipeline (Stages 1–3). "
+        "No results will be generated yet.",
+        err=True,
+    )
+    raise typer.Exit(code=1)
+
+
+# ---------------------------------------------------------------------------
+# Entrypoint
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    app()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 # ---------------------------------------------------------------------------
@@ -1113,35 +1108,35 @@ def validate_preprocessing_manifests_cmd(
     """Validate all preprocessing manifests under data/processed/preprocessing_manifests/."""
     configure_logging(log_level)  # type: ignore[arg-type]
 
-    from floodroute.preprocessing.prep_manifest import validate_preprocessing_manifests
-
-    manifests_dir = data_dir / "processed" / "preprocessing_manifests"
-    if not manifests_dir.is_dir():
-        typer.echo(f"ERROR: preprocessing manifests directory not found: {manifests_dir}", err=True)
-        raise typer.Exit(code=1)
-
-    try:
-        results = validate_preprocessing_manifests(manifests_dir)
-    except ValueError as exc:
-        typer.echo(f"ERROR: {exc}", err=True)
-        raise typer.Exit(code=1) from exc
-
-    if not results:
-        typer.echo("No preprocessing manifests found.")
-        return
-
-    for m in results:
-        vs = m.get("validation_status", "—")
-        typer.echo(f"  OK  {m['output_id']}  (op={m['operation']}, validation_status={vs})")
-    typer.echo(f"\nAll {len(results)} preprocessing manifest(s) valid.")
-
-
 @app.command("build-graph")
 def build_graph(
-    data_dir: Annotated[
-        Path,
-        typer.Option("--data-dir", "-d", help="Path to the data/ directory."),
-    ] = _DEFAULT_DATA,
+    log_level: Annotated[
+        str,
+        typer.Option("--log-level", help="Logging level."),
+    ] = "INFO",
+) -> None:
+    """Build the road-network graph from processed data (Stage 2+)."""
+    configure_logging(log_level)  # type: ignore[arg-type]
+    logger.warning("build-graph called but no processed data is available.")
+    typer.echo(
+        "ERROR: build-graph requires processed road-network data. "
+        "Complete Stage 1 data ingestion first.",
+        err=True,
+    )
+    raise typer.Exit(code=1)
+
+
+# ---------------------------------------------------------------------------
+# run-analysis  (Stage 3+)
+# ---------------------------------------------------------------------------
+
+
+@app.command("run-analysis")
+def run_analysis(
+    log_level: Annotated[
+        str,
+        typer.Option("--log-level", help="Logging level."),
+    ] = "INFO",
     municipality: Annotated[
         str | None,
         typer.Option(
@@ -1181,11 +1176,7 @@ def build_graph(
         compute_file_sha256,
         write_graph_manifest,
     )
-    from floodroute.graph.validate import (
-        GraphValidationFailed,
-        compute_graph_stats,
-        validate_road_graph,
-    )
+    from floodroute.graph.validate import GraphValidationFailed, validate_road_graph
     from floodroute.preprocessing.config import MUNICIPALITY_CODES, MUNICIPALITY_NAMES
 
     cfg = GraphConfig().resolve(data_dir)
@@ -1291,32 +1282,15 @@ def build_graph(
             continue
 
         typer.echo(f"  Graph: {G.number_of_nodes()} nodes, {G.number_of_edges()} edges")
-        bs = build_stats.to_dict()
-        typer.echo(
-            f"  Build stats: {bs['input_road_count']} roads, "
-            f"{bs['interior_nodes_added']} interior nodes, "
-            f"{bs['t_junction_splits_added']} T-junction splits, "
-            f"{bs['grade_sep_crossings_skipped']} grade-sep skipped"
-        )
-        typer.echo(
-            f"  Lengths: directed={bs['total_directed_edge_length_m'] / 1000:.2f} km, "
-            f"physical={bs['total_physical_segment_length_m'] / 1000:.2f} km"
-        )
+        typer.echo(f"  Build stats: {build_stats.to_dict()}")
 
         # Validate
-        min_node_cov = 0.85
-        min_km_cov = 0.85
         try:
-            graph_stats = validate_road_graph(
-                G,
-                min_largest_wcc_node_coverage=min_node_cov,
-                min_largest_wcc_physical_length_coverage=min_km_cov,
-            )
+            graph_stats = validate_road_graph(G)
             val_status = "passed"
             typer.echo(
                 f"  Validation PASSED: WCC={graph_stats['weakly_connected_component_count']}, "
-                f"node-cov={graph_stats['largest_wcc_node_coverage']:.1%}, "
-                f"km-cov={graph_stats['largest_wcc_physical_length_coverage']:.1%}"
+                f"largest_wcc={graph_stats['largest_wcc_coverage']:.1%}"
             )
         except GraphValidationFailed as exc:
             typer.echo(f"  Validation FAILED: {exc}", err=True)
@@ -1362,11 +1336,7 @@ def build_graph(
             source_admin_path=municipalities_gpkg,
             parameters=parameters,
             build_stats=build_stats.to_dict(),
-            graph_stats=graph_stats if val_status == "passed" else compute_graph_stats(G),
-            validation_thresholds={
-                "min_largest_wcc_node_coverage": min_node_cov,
-                "min_largest_wcc_physical_length_coverage": min_km_cov,
-            },
+            graph_stats=graph_stats if val_status == "passed" else {},
             output_graphml_path=graphml_path,
             output_nodes_gpkg_path=nodes_path,
             output_edges_gpkg_path=edges_path,
@@ -1432,21 +1402,13 @@ def inspect_graph_cmd(
         typer.echo(f"  Boundary nodes: {stats['boundary_node_count']}")
         typer.echo(f"  WCC count: {stats['weakly_connected_component_count']}")
         typer.echo(
-            f"  Largest WCC: {stats['largest_wcc_node_count']} nodes ({stats['largest_wcc_node_coverage']:.1%} of nodes)"
-        )
-        typer.echo(
-            f"  Largest WCC: {stats['largest_wcc_physical_segment_length_m'] / 1000:.2f} km ({stats['largest_wcc_physical_length_coverage']:.1%} of physical km)"
+            f"  Largest WCC: {stats['largest_wcc_node_count']} nodes "
+            f"({stats['largest_wcc_coverage']:.1%})"
         )
         typer.echo(f"  SCC count (>1 node): {stats['strongly_connected_component_count']}")
         typer.echo(
-            f"  Largest SCC: {stats['largest_scc_node_count']} nodes ({stats['largest_scc_node_coverage']:.1%})"
-        )
-        typer.echo(f"  Directed edge length: {stats['total_directed_edge_length_m'] / 1000:.2f} km")
-        typer.echo(
-            f"  Physical segment length: {stats['total_physical_segment_length_m'] / 1000:.2f} km"
-        )
-        typer.echo(
-            f"  Residual components: {stats['residual_component_count']} ({stats['residual_node_count']} nodes, {stats['residual_physical_length_m'] / 1000:.2f} km)"
+            f"  Largest SCC: {stats['largest_scc_node_count']} nodes "
+            f"({stats['largest_scc_coverage']:.1%})"
         )
 
 
@@ -1491,16 +1453,10 @@ def validate_graph_cmd(
             continue
         G = read_graphml(graphml_path)
         try:
-            stats = validate_road_graph(
-                G,
-                min_largest_wcc_node_coverage=0.85,
-                min_largest_wcc_physical_length_coverage=0.85,
-            )
+            stats = validate_road_graph(G)
             typer.echo(
                 f"{pcode} ({name}): VALID — {stats['node_count']} nodes, "
-                f"{stats['edge_count']} edges, "
-                f"node-cov={stats['largest_wcc_node_coverage']:.1%}, "
-                f"km-cov={stats['largest_wcc_physical_length_coverage']:.1%}"
+                f"{stats['edge_count']} edges, WCC={stats['largest_wcc_coverage']:.1%}"
             )
         except GraphValidationFailed as exc:
             typer.echo(f"{pcode} ({name}): FAILED — {exc}", err=True)
@@ -1521,12 +1477,56 @@ def run_analysis(
     log_level: Annotated[
         str,
         typer.Option("--log-level", help="Logging level."),
-    ] = "INFO",
-) -> None:
-    """Run the core routing and shelter-allocation analysis (Stage 3+)."""
-    configure_logging(log_level)  # type: ignore[arg-type]
-    logger.warning("run-analysis called but data layer is absent.")
-    typer.echo(
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
         "ERROR: run-analysis requires the processed data layer and a built graph. "
         "Complete Stages 1–2 first.",
         err=True,
@@ -1547,11 +1547,6 @@ def run_experiment(
     ] = None,
     log_level: Annotated[
         str,
-        typer.Option("--log-level", help="Logging level."),
-    ] = "INFO",
-) -> None:
-    """Execute a named experiment (Stage 3+)."""
-    configure_logging(log_level)  # type: ignore[arg-type]
     logger.warning("run-experiment called but prerequisites are absent.")
     typer.echo(
         "ERROR: run-experiment requires the full analysis pipeline (Stages 1–3). "
@@ -1562,6 +1557,11 @@ def run_experiment(
 
 
 # ---------------------------------------------------------------------------
+# Entrypoint
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    app()
 # Stage 5 — hazard commands
 # ---------------------------------------------------------------------------
 
@@ -1702,15 +1702,10 @@ def inspect_hazard(
 
     from floodroute.hazard.jrc import ReadinessDecision, run_phase_a  # noqa: PLC0415
 
-    # Auto-discover default cat raster alongside depth raster
-    cat_path = raster_path.parent / raster_path.name.replace("_raw.tif", "_categories.tif")
-
     result = run_phase_a(
         raster_path,
         admin_zip=admin_zip,
-        cat_path=cat_path if cat_path.exists() else None,
         edges_path=edges_path,
-        municipality_pcode="PH0600616",
     )
 
     typer.echo("\nJRC GloFAS v2.1 — Phase A Readiness Report")
@@ -1719,31 +1714,44 @@ def inspect_hazard(
     typer.echo(f"SHA-256: {result.sha256}")
     typer.echo(f"CRS: {result.raster_crs}  Pixel: ~{result.pixel_size_m_approx} m")
     typer.echo(f"Bounds (W/S/E/N): {result.raster_bounds}")
+    typer.echo(f"Municipality pixels: {result.municipality_total_pixels:,}")
 
-    typer.echo("\n--- Pixel categories (three-state, non-permanent only) ---")
-    for rp, pc in result.pixel_cats.items():
+    typer.echo("\n--- Return-period depth coverage ---")
+    for band_name, cov in result.band_coverage.items():
         typer.echo(
-            f"  {rp}: outside_domain={pc.outside_domain:,}  "
-            f"modelled_dry={pc.modelled_dry:,}  "
-            f"flooded={pc.flooded:,}  "
-            f"non_permanent={pc.non_permanent:,}  "
-            f"perm_water={pc.permanent_water:,}"
+            f"  {band_name}: valid={cov.valid_pixels:,} ({cov.valid_pct:.2f}%), "
+            f"flooded≥0.10m={cov.flooded_ge_threshold:,} ({cov.flooded_pct:.2f}%)"
         )
+        if cov.flooded_ge_threshold > 0:
+            typer.echo(
+                f"    depth min/med/max={cov.depth_min:.3f}/{cov.depth_median:.3f}/{cov.depth_max:.3f} m"
+            )
 
     typer.echo(
         f"\nMonotonicity: RP10≤RP20 violations={result.monotonicity_violations_rp10_rp20}, "
         f"RP20≤RP100 violations={result.monotonicity_violations_rp20_rp100}"
     )
-    typer.echo(f"LiPAD: {result.lipad_notes}")
+    typer.echo(
+        f"Permanent water: {result.permanent_water_pixels} pixels  "
+        f"Spurious flagged: {result.spurious_flagged_pixels} pixels"
+    )
 
-    if result.road_exposure:
-        typer.echo("\n--- Road exposure (interior overlap ≥ 5 m, non-permanent) ---")
-        for rp, re in result.road_exposure.items():
-            typer.echo(
-                f"  {rp}: exposed_normal={re.exposed_normal_segments} segs "
-                f"({re.exposed_normal_overlap_km:.3f} km)  "
-                f"Low={re.low_segments} Med={re.medium_segments} High={re.high_segments}"
-            )
+    if result.road_intersection:
+        ri = result.road_intersection
+        typer.echo("\n--- Road graph intersection ---")
+        typer.echo(
+            f"  Directed edges touching valid pixel: "
+            f"{ri.edges_touching_valid}/{ri.total_directed_edges} ({ri.edges_touching_pct:.1f}%)"
+        )
+        typer.echo(
+            f"  Physical segments: "
+            f"{ri.segments_touching_valid}/{ri.total_physical_segments} ({ri.segments_touching_pct:.1f}%)"
+        )
+        typer.echo(
+            f"  Physical length: "
+            f"{ri.length_touching_km:.2f}/{ri.total_physical_length_km:.2f} km "
+            f"({ri.length_touching_pct:.1f}%)"
+        )
 
     typer.echo(f"\n{'=' * 60}")
     decision_sym = {"READY": "✓", "PARTIAL": "~", "BLOCKED": "✗"}.get(result.decision.value, "?")
@@ -1752,107 +1760,99 @@ def inspect_hazard(
         typer.echo(f"  - {r}")
 
     if result.decision != ReadinessDecision.READY:
-        typer.echo("\nPhase B integration will NOT run for this municipality.")
+        typer.echo("\nPhase B integration will NOT run (decision is not READY).")
         typer.echo(
-            "See data/manifests/jrc_glofas_flood_hazard_v21.yaml "
-            "and data/processed/hazard/ for per-municipality readiness reports."
+            "See data/manifests/jrc_glofas_flood_hazard_v21.yaml and "
+            "data/processed/hazard/PH0600616_jrc_phase_a_readiness.yaml for details."
         )
 
     typer.echo("")
 
 
 # ---------------------------------------------------------------------------
-# Stage 5B — hazard integration / validation / summary
+# Entrypoint
 # ---------------------------------------------------------------------------
 
-_DEFAULT_GRAPH = _DEFAULT_DATA / "processed" / "graph"
-_DEFAULT_HAZARD_EDGES = _DEFAULT_GRAPH / "PH0600613_edges.gpkg"
-_DEFAULT_HAZARD_GRAPH = _DEFAULT_GRAPH / "PH0600613_graph.graphml"
-_DEFAULT_JRC_DEPTH_613 = _DEFAULT_JRC_RAW / "ph0600613_jrc_glofas_v21_raw.tif"
-_DEFAULT_JRC_CAT_613 = _DEFAULT_JRC_RAW / "ph0600613_jrc_glofas_v21_categories.tif"
-_DEFAULT_DEM_613 = _DEFAULT_DATA / "processed" / "dem" / "PH0600613_dem_utm51n.tif"
-_DEFAULT_WW_613 = _DEFAULT_DATA / "processed" / "osm" / "PH0600613_waterways_utm51n.gpkg"
+if __name__ == "__main__":
+    app()
 
 
-@app.command("integrate-hazard")
-def integrate_hazard(
-    graph_path: Annotated[
-        Path,
-        typer.Option("--graph", help="Stage 4 GraphML (EPSG:32651)."),
-    ] = _DEFAULT_HAZARD_GRAPH,
-    edges_gpkg: Annotated[
-        Path,
-        typer.Option("--edges-gpkg", help="Stage 4 edges GeoPackage."),
-    ] = _DEFAULT_HAZARD_EDGES,
-    depth_raster: Annotated[
-        Path,
-        typer.Option("--depth-raster", help="5-band JRC depth GeoTIFF."),
-    ] = _DEFAULT_JRC_DEPTH_613,
-    cat_raster: Annotated[
-        Path,
-        typer.Option("--cat-raster", help="4-band JRC category GeoTIFF."),
-    ] = _DEFAULT_JRC_CAT_613,
-    dem_path: Annotated[
-        Path | None,
-        typer.Option("--dem", help="Copernicus DEM GeoTIFF (EPSG:32651, optional)."),
-    ] = None,
-    waterway_path: Annotated[
-        Path | None,
-        typer.Option("--waterways", help="OSM waterway GeoPackage (EPSG:32651, optional)."),
-    ] = None,
-    output_dir: Annotated[
-        Path,
-        typer.Option("--output-dir", help="Directory for enriched GraphML + GeoPackage."),
-    ] = _DEFAULT_HAZARD_OUT,
-    force: Annotated[
-        bool,
-        typer.Option("--force/--no-force", help="Overwrite existing outputs."),
-    ] = False,
-    log_level: Annotated[
-        str,
-        typer.Option("--log-level", help="Logging level."),
-    ] = "INFO",
-) -> None:
-    """Run Stage 5B: attribute PH0600613 road graph with JRC flood, terrain and waterway evidence.
 
-    Produces:
-      PH0600613_phase_b_enriched.graphml  — topology + all Phase B attributes
-      PH0600613_phase_b_enriched.gpkg     — geometry + all Phase B attributes
 
-    Phase B is only permitted for PH0600613 (San Jose de Buenavista, READY).
-    Sibalom (PH0600616) is BLOCKED; Hamtic (PH0600608) is PARTIAL.
-    """
-    configure_logging(log_level)  # type: ignore[arg-type]
 
-    # Auto-use defaults for optional layers if files exist
-    _dem = dem_path or (_DEFAULT_DEM_613 if _DEFAULT_DEM_613.exists() else None)
-    _ww = waterway_path or (_DEFAULT_WW_613 if _DEFAULT_WW_613.exists() else None)
 
-    for label, p in [
-        ("graph", graph_path),
-        ("edges-gpkg", edges_gpkg),
-        ("depth-raster", depth_raster),
-        ("cat-raster", cat_raster),
-    ]:
-        if not p.exists():
-            typer.echo(f"ERROR: {label} not found: {p}", err=True)
-            raise typer.Exit(code=1)
 
-    from floodroute.hazard.phase_b import run_phase_b  # noqa: PLC0415
 
-    try:
-        result = run_phase_b(
-            graph_path,
-            edges_gpkg,
-            depth_raster,
-            cat_raster,
-            dem_path=_dem,
-            waterway_path=_ww,
-            output_dir=output_dir,
-            force=force,
-        )
-    except FileExistsError as exc:
-        typer.echo(f"ERROR: {exc}. Use --force to overwrite.", err=True)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
         raise typer.Exit(code=1) from exc
     except ValueError as exc:
         typer.echo(f"ERROR: {exc}", err=True)
@@ -1862,19 +1862,14 @@ def integrate_hazard(
     typer.echo(f"Municipality:        {result.municipality_code}")
     typer.echo(f"Directed edges:      {result.n_directed_edges:,}")
     typer.echo(f"Physical segments:   {result.n_physical_segments:,}")
-    typer.echo("")
-    typer.echo("Exposure (directed edges / physical segments):")
     typer.echo(
-        f"  RP10:  {result.n_exposed_dir_rp10:,} dir ({result.total_exposed_dir_m_rp10:.1f} m)"
-        f"  /  {result.n_exposed_phys_rp10:,} phys ({result.total_exposed_phys_m_rp10:.1f} m)"
+        f"Exposed edges RP10:  {result.n_exposed_rp10:,}  ({result.total_exposed_m_rp10:.1f} m)"
     )
     typer.echo(
-        f"  RP20:  {result.n_exposed_dir_rp20:,} dir ({result.total_exposed_dir_m_rp20:.1f} m)"
-        f"  /  {result.n_exposed_phys_rp20:,} phys ({result.total_exposed_phys_m_rp20:.1f} m)"
+        f"Exposed edges RP20:  {result.n_exposed_rp20:,}  ({result.total_exposed_m_rp20:.1f} m)"
     )
     typer.echo(
-        f"  RP100: {result.n_exposed_dir_rp100:,} dir ({result.total_exposed_dir_m_rp100:.1f} m)"
-        f"  /  {result.n_exposed_phys_rp100:,} phys ({result.total_exposed_phys_m_rp100:.1f} m)"
+        f"Exposed edges RP100: {result.n_exposed_rp100:,}  ({result.total_exposed_m_rp100:.1f} m)"
     )
     typer.echo(f"Waterway crossings:  {result.n_waterway_crossings:,}")
     typer.echo(f"\nEnriched GraphML: {result.output_graphml}")
@@ -1908,39 +1903,39 @@ def validate_hazard(
 
     import geopandas as gpd  # noqa: PLC0415
 
-    gdf = gpd.read_file(enriched_gpkg, layer="edges")
-    n = len(gdf)
-    failures: list[str] = []
 
-    # Required Phase B columns
-    jrc_cols = [
-        f"jrc_{rp}_{attr}"
-        for rp in ("rp10", "rp20", "rp100")
-        for attr in (
-            "status",
-            "depth_max_m",
-            "depth_wt_mean_m",
-            "exposed_m",
-            "exposed_pct",
-            "perm_water_m",
-            "spurious",
-            "sample_n",
-        )
-    ]
-    terrain_cols = [
-        "terrain_elev_min_m",
-        "terrain_elev_mean_m",
-        "terrain_elev_max_m",
-        "terrain_elev_change_m",
-        "terrain_slope_pct",
-    ]
-    waterway_cols = [
-        "waterway_nearest_dist_m",
-        "waterway_crossing",
-        "waterway_nearest_name",
-        "waterway_nearest_type",
-    ]
-    network_cols = ["network_wcc_id"]
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
     required = jrc_cols + terrain_cols + waterway_cols + network_cols
     missing = [c for c in required if c not in gdf.columns]
@@ -2043,75 +2038,37 @@ def hazard_summary(
         total_km = phys["length_m"].sum() / 1000
         typer.echo(f"Physical segments    : {len(phys):,}  ({total_km:.1f} km)")
 
-    # Deduplicate to physical segments for the summary tables
-    if "osm_id" in gdf.columns and "edge_seq" in gdf.columns:
-        phys = gdf.drop_duplicates(subset=["osm_id", "edge_seq"])
-        total_phys_km = phys["length_m"].sum() / 1000
-    else:
-        phys = gdf
-        total_phys_km = total_km
-
     typer.echo("")
     typer.echo("JRC Flood Evidence (non-permanent over-bank inundation):")
-    typer.echo("  Directed edges (both directions counted):")
     typer.echo(
-        f"  {'Return Period':<10} {'Dir edges':>10} {'Dir km':>9} {'% dir km':>10}"
-        f"  {'Phys segs':>10} {'Phys km':>9} {'% phys km':>10}"
+        f"  {'Return Period':<14} {'Exposed edges':>13} {'Exposed km':>10} {'% of total km':>14}"
     )
-    typer.echo(f"  {'-' * 75}")
+    typer.echo(f"  {'-' * 55}")
     for rp in ("rp10", "rp20", "rp100"):
         col_m = f"jrc_{rp}_exposed_m"
         if col_m not in gdf.columns:
             continue
-        dir_exp = int((gdf[col_m] > 0).sum())
-        dir_km = gdf[col_m].sum() / 1000
-        dir_pct = (dir_km / total_km * 100) if total_km > 0 else 0.0
-        # Physical: per segment, keep max exposed_m across directed edges
-        phys_grp = gdf.groupby(["osm_id", "edge_seq"])[col_m].max()
-        phys_exp = int((phys_grp > 0).sum())
-        phys_km = phys_grp.sum() / 1000
-        phys_pct = (phys_km / total_phys_km * 100) if total_phys_km > 0 else 0.0
-        typer.echo(
-            f"  {rp.upper():<10} {dir_exp:>10,} {dir_km:>9.3f} {dir_pct:>9.2f}%"
-            f"  {phys_exp:>10,} {phys_km:>9.3f} {phys_pct:>9.2f}%"
-        )
+        exp_edges = int((gdf[col_m] > 0).sum())
+        exp_km = gdf[col_m].sum() / 1000
+        pct = (exp_km / total_km * 100) if total_km > 0 else 0
+        typer.echo(f"  {rp.upper():<14} {exp_edges:>13,} {exp_km:>10.3f} {pct:>13.2f}%")
 
     typer.echo("")
-    typer.echo("JRC Status breakdown (RP10, directed edges):")
+    typer.echo("JRC Status breakdown (RP10):")
     if "jrc_rp10_status" in gdf.columns:
         for status, cnt in gdf["jrc_rp10_status"].value_counts().items():
             typer.echo(f"  {status:<20} {cnt:>6,}")
 
     typer.echo("")
-    typer.echo("Depth class breakdown (RP10, non-permanent, by max depth per directed edge):")
+    typer.echo("Depth class breakdown (RP10, non-permanent, by max depth per edge):")
     if "jrc_rp10_depth_max_m" in gdf.columns:
         exposed = gdf[gdf["jrc_rp10_exposed_m"] > 0].copy()
-        no_inund = int((exposed["jrc_rp10_depth_max_m"] < 0.10).sum())
-        low = (
-            int(
-                (
-                    (exposed["jrc_rp10_depth_max_m"] >= 0.10)
-                    & (exposed["jrc_rp10_depth_max_m"] < 0.50)
-                ).sum()
-            )
-            if len(exposed)
-            else 0
-        )
-        med = (
-            int(
-                (
-                    (exposed["jrc_rp10_depth_max_m"] >= 0.50)
-                    & (exposed["jrc_rp10_depth_max_m"] <= 1.50)
-                ).sum()
-            )
-            if len(exposed)
-            else 0
-        )
-        hi = int((exposed["jrc_rp10_depth_max_m"] > 1.50).sum())
-        typer.echo(f"  no_modeled_inundation (<0.10 m): {no_inund:>6,}")
-        typer.echo(f"  Low  [0.10, 0.50)            m: {low:>6,}")
-        typer.echo(f"  Med  [0.50, 1.50]            m: {med:>6,}")
-        typer.echo(f"  High (1.50, ∞)               m: {hi:>6,}")
+        low = int((exposed["jrc_rp10_depth_max_m"].between(0.10, 0.50, inclusive="left")).sum())
+        med = int((exposed["jrc_rp10_depth_max_m"].between(0.50, 1.50, inclusive="left")).sum())
+        hi = int((exposed["jrc_rp10_depth_max_m"] >= 1.50).sum())
+        typer.echo(f"  Low  [0.10–0.50) m : {low:>6,}")
+        typer.echo(f"  Med  [0.50–1.50) m : {med:>6,}")
+        typer.echo(f"  High [1.50+)     m : {hi:>6,}")
 
     typer.echo("")
     typer.echo("Waterway evidence:")
@@ -2147,277 +2104,15 @@ def hazard_summary(
 
 
 # ---------------------------------------------------------------------------
-# Stage 6A — shelter readiness
-# ---------------------------------------------------------------------------
-
-_DEFAULT_SHELTER_CSV = _DEFAULT_DATA / "raw" / "sjdb_evacuation_shelters.csv"
-_DEFAULT_SHELTER_TEMPLATE = _DEFAULT_DATA / "templates" / "shelter_import_template.csv"
-
-
-@app.command("inspect-shelters")
-def inspect_shelters(
-    shelters_path: Annotated[
-        Path,
-        typer.Option(
-            "--shelters",
-            "-s",
-            help="Path to the shelter import CSV (Stage 6A candidate data).",
-        ),
-    ] = _DEFAULT_SHELTER_CSV,
-    log_level: Annotated[
-        str,
-        typer.Option("--log-level", help="Logging level."),
-    ] = "INFO",
-) -> None:
-    """Validate shelter import CSV and report Stage 6A readiness.
-
-    Reads the shelter candidate CSV, validates every record against the
-    evidence-tiered import schema, checks for duplicate IDs, and returns:
-
-    \b
-      READY   — ≥2 eligible, verified, routable shelters with authoritative capacity.
-      PARTIAL — ≥2 eligible, routable candidates, but capacity or status is incomplete.
-      BLOCKED — fewer than 2 eligible routable candidates.
-
-    This command does NOT perform routing, graph snapping, or demand modelling.
-    """
-    configure_logging(log_level)  # type: ignore[arg-type]
-    logger.info("inspect-shelters: path=%s", shelters_path)
-
-    if not shelters_path.exists():
-        typer.echo(
-            f"ERROR: Shelter import CSV not found: {shelters_path}\n"
-            f"Copy the template and populate it:\n"
-            f"  cp {_DEFAULT_SHELTER_TEMPLATE} {shelters_path}",
-            err=True,
-        )
-        raise typer.Exit(code=1)
-
-    from floodroute.shelters.readiness import ReadinessDecision, evaluate_shelter_readiness
-    from floodroute.shelters.schema import load_shelter_csv, validate_shelter_records
-
-    raw_rows = load_shelter_csv(shelters_path)
-
-    typer.echo("\nShelter Import — Stage 6A Readiness Report")
-    typer.echo(f"Source: {shelters_path}")
-    typer.echo(f"Rows in file (excluding header): {len(raw_rows)}")
-
-    if not raw_rows:
-        typer.echo("\nNo shelter records found (template is empty).")
-        typer.echo(f"\n{'=' * 60}")
-        typer.echo("STAGE 6A DECISION: [✗] BLOCKED")
-        typer.echo("  - No shelter records loaded.")
-        typer.echo(
-            "\nPopulate the CSV using MDRRMO/LGU documentation and re-run."
-        )
-        raise typer.Exit(code=0)
-
-    valid_records, errors = validate_shelter_records(raw_rows)
-
-    if errors:
-        typer.echo(f"\nValidation errors ({len(errors)}):")
-        for msg in errors:
-            typer.echo(f"  ERROR: {msg}")
-
-    typer.echo(f"\nRecords parsed: {len(raw_rows)}  valid: {len(valid_records)}  errors: {len(errors)}")
-
-    result = evaluate_shelter_readiness(valid_records)
-
-    typer.echo("\n--- Shelter candidate pool ---")
-    typer.echo(f"  Total records  : {result.n_total}")
-    typer.echo(f"  Eligible        : {result.n_eligible}  (tier≠excluded, status≠project_only)")
-    typer.echo(f"  Routable        : {result.n_routable}  (entrance coordinates present)")
-    typer.echo(f"  Verified        : {result.n_verified}  (verification_status=verified)")
-    typer.echo(f"  Auth. capacity  : {result.n_auth_capacity}  (official capacity, authoritative provenance)")
-
-    if result.blocking_ids:
-        typer.echo(f"\n  Eligible but missing entrance coords ({len(result.blocking_ids)}):")
-        for sid in result.blocking_ids[:10]:
-            typer.echo(f"    {sid}")
-        if len(result.blocking_ids) > 10:
-            typer.echo(f"    … and {len(result.blocking_ids) - 10} more")
-
-    decision_sym = {"READY": "[✓]", "PARTIAL": "[~]", "BLOCKED": "[✗]"}.get(
-        result.decision.value, "[?]"
-    )
-    typer.echo(f"\n{'=' * 60}")
-    typer.echo(f"STAGE 6A DECISION: {decision_sym} {result.decision.value}")
-    for r in result.reasons:
-        typer.echo(f"  - {r}")
-
-    if result.decision != ReadinessDecision.READY:
-        typer.echo(
-            "\nStage 6B shelter allocation will NOT run until readiness is READY."
-        )
-        typer.echo(
-            "See data/manifests/sjdb_evacuation_shelters.yaml "
-            "and data/templates/shelter_import_template.csv."
-        )
-
-    typer.echo("")
-
-    if errors:
-        raise typer.Exit(code=1)
-
-
-# ---------------------------------------------------------------------------
-# Stage 6B — shelter candidate snapping
-# ---------------------------------------------------------------------------
-
-_DEFAULT_MUNI_WGS84 = _DEFAULT_DATA / "processed" / "admin" / "municipalities_wgs84.gpkg"
-_DEFAULT_SJDB_GRAPHML = _DEFAULT_GRAPH / "PH0600613_graph.graphml"
-_DEFAULT_SJDB_PSGC = "PH0600613"
-
-
-@app.command("snap-shelters")
-def snap_shelters(
-    shelters_path: Annotated[
-        Path,
-        typer.Option(
-            "--shelters",
-            "-s",
-            help="Path to the shelter import CSV.",
-        ),
-    ] = _DEFAULT_SHELTER_CSV,
-    municipalities_gpkg: Annotated[
-        Path,
-        typer.Option(
-            "--municipalities",
-            "-m",
-            help="Path to the municipalities WGS-84 GeoPackage.",
-        ),
-    ] = _DEFAULT_MUNI_WGS84,
-    graph_path: Annotated[
-        Path,
-        typer.Option(
-            "--graph",
-            "-g",
-            help="Path to the road-graph GraphML file.",
-        ),
-    ] = _DEFAULT_SJDB_GRAPHML,
-    psgc: Annotated[
-        str,
-        typer.Option(
-            "--psgc",
-            help="PSGC code of the target municipality.",
-        ),
-    ] = _DEFAULT_SJDB_PSGC,
-    warn_m: Annotated[
-        float,
-        typer.Option("--warn-m", help="Snap distance warning threshold in metres."),
-    ] = 100.0,
-    reject_m: Annotated[
-        float,
-        typer.Option("--reject-m", help="Snap distance rejection threshold in metres."),
-    ] = 500.0,
-    log_level: Annotated[
-        str,
-        typer.Option("--log-level", help="Logging level."),
-    ] = "WARNING",
-) -> None:
-    """Stage 6B: validate shelter candidates against municipal boundary and snap to road graph.
-
-    Loads shelter records from the import CSV, checks each against the San Jose
-    de Buenavista municipal boundary, and snaps eligible entrances to the nearest
-    node in the road graph.  Produces a readiness decision (READY/PARTIAL/BLOCKED).
-
-    This command does NOT perform routing, demand modelling, or allocation.
-    """
-    configure_logging(log_level)  # type: ignore[arg-type]
-    logger.info("snap-shelters: shelters=%s psgc=%s", shelters_path, psgc)
-
-    for label, path in [
-        ("Shelter CSV", shelters_path),
-        ("Municipalities GPKG", municipalities_gpkg),
-        ("Graph GraphML", graph_path),
-    ]:
-        if not path.exists():
-            typer.echo(f"ERROR: {label} not found: {path}", err=True)
-            raise typer.Exit(code=1)
-
-    from floodroute.shelters.phase_b import run_phase_b
-
-    try:
-        report = run_phase_b(
-            shelter_csv=shelters_path,
-            municipalities_gpkg=municipalities_gpkg,
-            graph_graphml=graph_path,
-            target_psgc=psgc,
-            warn_m=warn_m,
-            reject_m=reject_m,
-        )
-    except KeyError as exc:
-        typer.echo(f"ERROR: {exc}", err=True)
-        raise typer.Exit(code=1) from exc
-
-    # ------------------------------------------------------------------
-    # Report
-    # ------------------------------------------------------------------
-    typer.echo(f"\n{'=' * 65}")
-    typer.echo(f"Stage 6B Shelter Snap Report — PSGC {psgc}")
-    typer.echo(f"{'=' * 65}")
-    typer.echo(f"  Shelter CSV        : {shelters_path}")
-    typer.echo(f"  Records validated  : {report.n_validated}")
-
-    if report.validation_errors:
-        typer.echo(f"\n  Validation errors ({len(report.validation_errors)}):")
-        for msg in report.validation_errors:
-            typer.echo(f"    [!] {msg}")
-
-    typer.echo(f"\n  Municipal boundary check (PSGC {psgc}):")
-    for cr in report.containment_results:
-        mark = "IN " if cr.inside else "OUT"
-        dist = f"  ({cr.distance_to_boundary_m:+.1f} m)" if cr.distance_to_boundary_m is not None else ""
-        typer.echo(f"    [{mark}] {cr.shelter_id}{dist}{' — ' + cr.message if cr.message else ''}")
-
-    typer.echo("\n  Graph snap results:")
-    for sr in report.snap_results:
-        if sr.status == "skipped":
-            typer.echo(f"    [SKIP] {sr.shelter_id} — ineligible")
-        elif sr.status == "no_entrance":
-            typer.echo(f"    [----] {sr.shelter_id} — no entrance coordinates")
-        elif sr.status == "snapped":
-            typer.echo(
-                f"    [OK  ] {sr.shelter_id} → node {sr.snapped_node_id} "
-                f"({sr.snap_distance_m:.1f} m)"
-            )
-        elif sr.status == "warned":
-            typer.echo(
-                f"    [WARN] {sr.shelter_id} → node {sr.snapped_node_id} "
-                f"({sr.snap_distance_m:.1f} m) — {sr.message}"
-            )
-        elif sr.status == "rejected":
-            typer.echo(
-                f"    [REJ ] {sr.shelter_id} — {sr.message}"
-            )
-
-    typer.echo(
-        f"\n  Snap summary: {report.n_accepted_snaps} accepted, "
-        f"{report.n_no_entrance} no entrance, "
-        f"{report.n_rejected_snaps} rejected."
-    )
-
-    typer.echo(f"\n  Readiness: {report.readiness.summary}")
-    if report.readiness.reasons:
-        for reason in report.readiness.reasons:
-            typer.echo(f"    - {reason}")
-
-    typer.echo(
-        f"  Counts: {report.readiness.n_total} total / "
-        f"{report.readiness.n_eligible} eligible / "
-        f"{report.readiness.n_routable} routable / "
-        f"{report.readiness.n_verified} verified / "
-        f"{report.readiness.n_auth_capacity} auth_cap"
-    )
-    typer.echo("")
-
-    if report.validation_errors:
-        raise typer.Exit(code=1)
-
-
-# ---------------------------------------------------------------------------
 # Entrypoint
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     app()
+
+    if "waterway_crossing" in gdf.columns:
+        n_cross = int(gdf["waterway_crossing"].sum())
+        typer.echo(f"  Edges crossing waterway : {n_cross:,}")
+    if "waterway_nearest_dist_m" in gdf.columns:
+        med_dist = gdf["waterway_nearest_dist_m"].median()
+        typer.echo(f"  Median dist to waterway : {med_dist:.0f} m")

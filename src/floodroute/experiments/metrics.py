@@ -1,4 +1,4 @@
-"""Stage 8 metrics: compute all reported statistics for one experiment run.
+"""Stage 8 / Stage 11 metrics: compute all reported statistics for one experiment run.
 
 Every metric is derived from the ``RunResult`` produced by one of the three
 algorithms.  No data is modified; metrics are computed read-only.
@@ -13,8 +13,12 @@ shelter_loads
     Total assigned units per shelter node.
 
 capacity_violations
-    Shelters whose load exceeds scenario capacity.  Algorithm C (FloodRoute)
-    enforces capacity; A and B do not — violations may appear there.
+    Shelters whose load exceeds scenario capacity.  Algorithms A and B do not
+    enforce shelter capacity — violations may appear.  Algorithm C (exact MCF)
+    and B+ (greedy) enforce capacity as hard constraints; neither can produce
+    violations.  Assignment rate must always be read alongside overflow:
+    100% assignment with violations for A/B means shelter load exceeded
+    capacity.
 
 flood_exposed_length_m
     For each assigned route, sum the ``length_m`` of every edge whose JRC
@@ -25,18 +29,33 @@ flood_exposed_length_m
 
 total_route_cost_m_eq / max_route_cost_m_eq / mean_route_cost_m_eq
     Aggregate, maximum, and mean per-unit route costs using the scenario OD
-    costs (flood-aware for B/C, ordinary for A).
+    costs (flood-aware for B/B+/C, ordinary for A).
 
 detour_ratio
     ``Σ f(o,s) · flood_od_cost(o,s) / Σ f(o,s) · ordinary_od_cost(o,s)``
     for all assigned pairs where both costs are available.  For algorithm A
     this ratio equals 1.0 by definition (both numerator and denominator use
-    ordinary costs).
+    ordinary costs).  When the ordinary-cost denominator is zero (undefined),
+    the ratio falls back to ``1.0``.
+
+physical_route_distance_m / dry_route_distance_m / flooded_route_distance_m
+    Population-weighted sums in person·metres:
+    - physical = total route length (all edges)
+    - flooded  = length of edges classified ``'flooded'`` at the given RP
+    - dry      = physical − flooded (these three are additive)
+
+flooded_person_distance_m
+    Synonym for ``flooded_route_distance_m`` (person·metres on flooded
+    segments), recorded separately for clarity.
+
+penalized_cost_m_eq
+    Population-weighted sum of scenario OD costs (metres-equivalent):
+    ordinary distances for A, flood-penalised distances for B/B+/C.
 
 unreachable_origins
     Origin nodes in the demands dict that have no path to any shelter under
     the scenario routing model.  Includes structurally isolated nodes and
-    nodes cut off by the conservative flood policy (B/C only).
+    nodes cut off by the conservative flood policy (B/B+/C only).
 
 runtime_s
     Wall-clock seconds as recorded by the algorithm function.
@@ -136,109 +155,178 @@ def compute_flood_exposed_length(
     return total_m
 
 
+def physical_path_distances(
+    path: list[int],
+    G: nx.MultiDiGraph,
+    return_period: str,
+) -> tuple[float, float]:
+    """Return ``(physical_m, flooded_m)`` for a single node-list path.
+
+    ``physical_m`` is the sum of minimum edge lengths along the path.
+    ``flooded_m`` is the subset of that length on edges whose JRC status is
+    ``'flooded'`` at the given return period.
+    """
+    rp_key = f"jrc_{return_period.lower()}_status"
+    phys_m = 0.0
+    flood_m = 0.0
+    for i in range(len(path) - 1):
+        u, v = path[i], path[i + 1]
+        if u not in G or v not in G[u]:
+            continue
+        best_length = float("inf")
+        best_status: str | None = None
+        for attrs in G[u][v].values():
+            length = float(attrs.get("length_m") or 0.0)
+            if length < best_length:
+                best_length = length
+                best_status = attrs.get(rp_key)
+        if best_length < float("inf"):
+            phys_m += best_length
+            if best_status == "flooded":
+                flood_m += best_length
+    return phys_m, flood_m
+
+
 def compute_metrics(
     result: RunResult,
-    G: nx.MultiDiGraph,
+    G: nx.MultiDiGraph | None = None,
     total_population: int | None = None,
 ) -> dict:
-    """Compute all experiment metrics for one run.
+    """Compute all reported metrics for one experiment run.
 
     Parameters
     ----------
     result:
-        Output from one of the algorithm functions.
+        ``RunResult`` from one of the algorithm functions.
     G:
-        Road graph with JRC flood attributes (used for flood exposure).
+        Road graph.  Required for flood-exposure and physical-distance metrics;
+        when ``None`` those metrics default to 0.0.
     total_population:
-        Municipality-level PSA census total (e.g. 65,140 for SJDB).  Written
-        verbatim to the ``total_population_2020`` column so every CSV row
-        carries the denominator used for demand scaling.  Pass ``None`` to
-        leave the column empty (e.g. in unit tests that use synthetic graphs).
-
-    Returns
-    -------
-    dict
-        Flat dict of metrics suitable for one CSV row.  All keys are strings;
-        values are int, float, or str.
+        Optional total population for context (not used in rate calculations).
     """
-    demands = result.demands
-    capacities = result.capacities
-    assignments = result.assignments
-    routes = result.routes
-    return_period = result.return_period
+    # ------------------------------------------------------------------ demand
+    total_demand = sum(result.demands.values())
 
-    total_demand = sum(demands.values())
-    total_assigned = sum(assignments.values())
+    shelter_loads: dict[int, int] = {}
+    for (_o, s), flow in result.assignments.items():
+        if flow > 0:
+            shelter_loads[s] = shelter_loads.get(s, 0) + flow
+
+    total_assigned = sum(flow for flow in result.assignments.values() if flow > 0)
     total_unassigned = total_demand - total_assigned
+    assignment_rate = total_assigned / total_demand if total_demand > 0 else 0.0
 
-    # Shelter loads
-    shelter_loads: dict[int, int] = {s: 0 for s in capacities}
-    for (_o, s), units in assignments.items():
-        shelter_loads[s] = shelter_loads.get(s, 0) + units
+    # ---------------------------------------------------------------- overflow
+    capacity_violations: list[int] = []
+    total_overflow = 0
+    for s, cap in result.capacities.items():
+        load = shelter_loads.get(s, 0)
+        overflow = max(0, load - cap)
+        if overflow > 0:
+            capacity_violations.append(s)
+            total_overflow += overflow
 
-    # Capacity violations
-    violations: list[int] = [
-        s for s, load in shelter_loads.items() if load > capacities[s]
-    ]
+    # -------------------------------------------------------- unreachable / reasons
+    od_origins = {k[0] for k in result.od_costs_scenario}
+    assigned_origins = {k[0] for k, v in result.assignments.items() if v > 0}
+    unreachable_origins: list[int] = []
+    unassigned_by_reason: dict[str, int] = {}
+    for o, d in result.demands.items():
+        if d <= 0 or o in assigned_origins:
+            continue
+        if o not in od_origins:
+            unreachable_origins.append(o)
+            unassigned_by_reason["unreachable"] = (
+                unassigned_by_reason.get("unreachable", 0) + d
+            )
+        else:
+            unassigned_by_reason["capacity_exhausted"] = (
+                unassigned_by_reason.get("capacity_exhausted", 0) + d
+            )
 
-    # Unreachable origins: in demands but no route to any shelter
-    od_keys = set(result.od_costs_scenario)
-    unreachable: list[int] = sorted(
-        o for o in demands if not any(o == key[0] for key in od_keys)
-    )
+    # -------------------------------------------------------------- route costs
+    total_cost = 0.0
+    max_cost = 0.0
+    total_weighted_units = 0
+    penalized_cost = 0.0
 
-    # Flood-exposed route length (post-hoc for A; scenario RP for B/C).
-    # Edge selection is routing-model-consistent: min-length for A, min-flood-
-    # aware-cost among available edges for B/C.
-    flood_exposed_m = compute_flood_exposed_length(
-        routes, assignments, G, return_period, algorithm=result.algorithm
-    )
+    for (o, s), flow in result.assignments.items():
+        if flow <= 0:
+            continue
+        cost = result.od_costs_scenario.get((o, s), 0.0)
+        total_cost += cost * flow
+        max_cost = max(max_cost, cost)
+        total_weighted_units += flow
+        penalized_cost += cost * flow
 
-    # Route cost metrics (use scenario OD costs — ordinary for A, flood-aware for B/C)
-    pair_costs = [
-        result.od_costs_scenario[(o, s)]
-        for (o, s) in assignments
-        if (o, s) in result.od_costs_scenario
-    ]
-    total_cost = sum(assignments.get(k, 0) * c for k, c in result.od_costs_scenario.items() if k in assignments)
-    max_cost = max(pair_costs) if pair_costs else 0.0
-    mean_cost = (total_cost / total_assigned) if total_assigned > 0 else 0.0
+    mean_cost = total_cost / total_weighted_units if total_weighted_units > 0 else 0.0
 
-    # Detour ratio: scenario cost / ordinary cost for assigned pairs
-    numerator = sum(
-        assignments[k] * result.od_costs_scenario[k]
-        for k in assignments
-        if k in result.od_costs_scenario and k in result.od_costs_ordinary
-    )
-    denominator = sum(
-        assignments[k] * result.od_costs_ordinary[k]
-        for k in assignments
-        if k in result.od_costs_scenario and k in result.od_costs_ordinary
-    )
-    detour_ratio = (numerator / denominator) if denominator > 0 else 1.0
+    # ---------------------------------------------------------- detour ratio
+    num_detour = 0.0
+    denom_detour = 0.0
+    for (o, s), flow in result.assignments.items():
+        if flow <= 0:
+            continue
+        flood_c = result.od_costs_scenario.get((o, s))
+        ord_c = result.od_costs_ordinary.get((o, s))
+        if flood_c is not None and ord_c is not None and ord_c > 0:
+            num_detour += flood_c * flow
+            denom_detour += ord_c * flow
+    detour_ratio = num_detour / denom_detour if denom_detour > 0 else 1.0
 
-    run_id = f"{result.algorithm}_{return_period}_{result.demand_fraction:.2f}"
+    # ------------------------------------------ flood-exposed + physical distances
+    flood_exposed_length_m = 0.0
+    physical_route_distance_m = 0.0
+    flooded_route_distance_m = 0.0
+
+    if G is not None:
+        flood_exposed_length_m = compute_flood_exposed_length(
+            result.routes, result.assignments, G,
+            result.return_period, result.algorithm,
+        )
+        for (o, s), path in result.routes.items():
+            flow = result.assignments.get((o, s), 0)
+            if flow <= 0:
+                continue
+            for i in range(len(path) - 1):
+                u, v = path[i], path[i + 1]
+                if u not in G or v not in G[u]:
+                    continue
+                best_length = min(
+                    (float(attrs.get("length_m") or 0.0) for attrs in G[u][v].values()),
+                    default=0.0,
+                )
+                best_status = _best_edge_status(G, u, v, result.return_period)
+                physical_route_distance_m += best_length * flow
+                if best_status == "flooded":
+                    flooded_route_distance_m += best_length * flow
+
+    dry_route_distance_m = physical_route_distance_m - flooded_route_distance_m
+
     return {
-        "run_id": run_id,
-        "algorithm": result.algorithm,
-        "return_period": return_period,
-        "demand_fraction": result.demand_fraction,
-        "total_population_2020": total_population,
         "total_demand": total_demand,
         "total_assigned": total_assigned,
         "total_unassigned": total_unassigned,
-        "assignment_rate": round(total_assigned / total_demand, 4) if total_demand > 0 else 0.0,
-        **{f"shelter_{s}_load": shelter_loads.get(s, 0) for s in sorted(capacities)},
-        **{f"shelter_{s}_capacity": capacities[s] for s in sorted(capacities)},
-        "num_capacity_violations": len(violations),
-        "capacity_violation_shelters": ",".join(str(s) for s in sorted(violations)),
-        "flood_exposed_length_m": round(flood_exposed_m, 2),
-        "total_route_cost_m_eq": round(total_cost, 2),
-        "max_route_cost_m_eq": round(max_cost, 2),
-        "mean_route_cost_m_eq": round(mean_cost, 2),
-        "detour_ratio": round(detour_ratio, 4),
-        "num_origins": len(demands),
-        "num_unreachable_origins": len(unreachable),
-        "unreachable_origin_nodes": ",".join(str(n) for n in unreachable),
-        "runtime_s": round(result.runtime_s, 3),
+        "assigned_population": total_assigned,
+        "unassigned_population": total_unassigned,
+        "assignment_rate": assignment_rate,
+        "shelter_loads": shelter_loads,
+        "capacity_violations": capacity_violations,
+        "total_overflow_units": total_overflow,
+        "unreachable_origins": unreachable_origins,
+        "unassigned_by_reason": unassigned_by_reason,
+        "total_route_cost_m_eq": total_cost,
+        "max_route_cost_m_eq": max_cost,
+        "mean_route_cost_m_eq": mean_cost,
+        "detour_ratio": detour_ratio,
+        "penalized_cost_m_eq": penalized_cost,
+        "flood_exposed_length_m": flood_exposed_length_m,
+        "physical_route_distance_m": physical_route_distance_m,
+        "flooded_route_distance_m": flooded_route_distance_m,
+        "flooded_person_distance_m": flooded_route_distance_m,
+        "dry_route_distance_m": dry_route_distance_m,
+        "runtime_s": result.runtime_s,
+        "algorithm": result.algorithm,
+        "return_period": result.return_period,
+        "demand_fraction": result.demand_fraction,
     }

@@ -8,41 +8,25 @@ prefixes to prevent conflation:
   waterway_*                                  — OSM waterway proximity / crossing
   network_*                                   — graph topology (WCC id)
 
-CATEGORY RASTER (5-band, acquired 2026-08-23 from EE tile ID230_N20_E120):
-  Band 0  RP10_depth_category   — -1 = not flooded; 2 | 3 = flooded
-  Band 1  RP20_depth_category   — -1 = not flooded; 2 | 3 = flooded
-  Band 2  RP100_depth_category  — -1 = not flooded; 2 | 3 = flooded
-  Band 3  permanent_water_class — -1 = not permanent; 1 = permanent water
-  Band 4  spurious_depth_category — -1 = not flagged; 1 = flagged
+Three-state pixel semantics (verified from depth_category band in Phase A):
+  outside_domain  cat == NODATA_SENTINEL           (GloFAS has no output)
+  modelled_dry    cat == dry_val (0 for PH0600613) (within domain, not flooded)
+  flooded         cat ∈ flood_vals {2, 3}          (positive depth in band)
 
-STATUS VOCABULARY (per RP):
-  no_overlap      — no JRC pixel has interior overlap ≥ MIN_INTERIOR_LEN_M
-  outside_domain  — pixels overlap but all have depth == NODATA_SENTINEL (-9999):
-                    these pixels carry no valid hydraulic model output
-  modelled_dry    — pixels overlap, at least one is within the model domain
-                    (depth ≠ -9999), but none have category 2 or 3
-  flooded         — at least one overlapping pixel has cat ∈ {2, 3} and is not
-                    permanent water
+Only non-permanent flooded pixels (permanent_water_class ≠ 1) contribute to
+``jrc_rp*_exposed_m``. Permanent-water intersections are recorded separately
+as ``jrc_rp*_perm_water_m``.
 
-NOTE: The re-acquired EE category raster uses -1 for both outside-domain and
-modelled-dry cells.  These states are distinguished by the depth raster:
-outside_domain pixels have depth == NODATA_SENTINEL (-9999, no valid model
-output); modelled-dry pixels have depth == 0.0 (within domain, not inundated).
-For PH0600613 (San Jose), the exported raster extent lies entirely within the
-GloFAS model domain — no outside_domain pixels exist here; all non-flooded
-pixels are modelled_dry.
-
-Only non-permanent flooded pixels (permanent_water_class band of DEPTH raster
-≠ 1) contribute to ``jrc_rp*_exposed_m``. Permanent-water intersections are
-recorded separately as ``jrc_rp*_perm_water_m``.
-
-Interior overlap threshold: MIN_INTERIOR_LEN_M (5.0 m). Zero-length boundary
+Interior overlap threshold: MIN_INTERIOR_LEN_M (5.0 m).  Zero-length boundary
 touches are excluded.
+
+RP20 domain indicator: derived from RP10 depth_category (domain is constant
+across return periods within GloFAS v2.1; RP20-specific category not acquired).
 
 PASSABILITY NOTE
 ----------------
-This module records evidence only. It does NOT infer passability, closure,
-travel speed, or routing decisions. Phase B outputs are inputs to Stage 6
+This module records evidence only.  It does NOT infer passability, closure,
+travel speed, or routing decisions.  Phase B outputs are inputs to Stage 6
 routing experiments.
 """
 
@@ -62,7 +46,7 @@ import rasterio.transform
 from pyproj import Transformer
 from shapely.geometry import LineString
 
-from floodroute.graph.io import read_graphml, write_graphml
+from floodroute.graph.io import read_graphml, write_edges_gpkg, write_graphml
 from floodroute.hazard.jrc import MIN_INTERIOR_LEN_M, NODATA_SENTINEL
 
 logger = logging.getLogger("floodroute.hazard.phase_b")
@@ -70,22 +54,21 @@ logger = logging.getLogger("floodroute.hazard.phase_b")
 # ── San Jose de Buenavista (PH0600613) constants ───────────────────────────
 
 MUNICIPALITY_PCODE: str = "PH0600613"
-_NOT_FLOODED_CAT: int = -1  # category value for "not flooded" in EE export (-9999 not used)
-_FLOOD_VALS: frozenset[int] = frozenset({2, 3})  # depth_category values indicating flooding
+_DRY_VAL: int = 0          # depth_category value for modelled-dry in this tile sub-area
+_FLOOD_VALS: frozenset[int] = frozenset({2, 3})
 
-# Band indices in depth raster (0-based, 5 bands)
+# Band indices in depth raster (0-based)
 _D_RP10 = 0
 _D_RP20 = 1
 _D_RP100 = 2
-_D_PW = 3  # permanent_water_class: 0 = not permanent, 1 = permanent water
-_D_SD = 4  # spurious_depth_category: 0 = not flagged
+_D_PW = 3   # permanent_water_class
+_D_SD = 4   # spurious_depth_category
 
-# Band indices in category raster (0-based, 5 bands — acquired 2026-08-23)
-_C_RP10 = 0  # RP10_depth_category
-_C_RP20 = 1  # RP20_depth_category (acquired directly; not inferred)
-_C_RP100 = 2  # RP100_depth_category
-_C_PW = 3  # permanent_water_class (-1 = not permanent, 1 = permanent)
-_C_SD = 4  # spurious_depth_category (-1 = not flagged, 1 = flagged)
+# Band indices in category raster (0-based)
+_C_RP10 = 0
+_C_RP100 = 1
+_C_PW = 2
+_C_SD = 3
 
 # DEM sampling density (points along edge)
 _DEM_SAMPLE_PTS: int = 20
@@ -101,29 +84,28 @@ _RETURN_PERIODS: list[str] = ["RP10", "RP20", "RP100"]
 class PixelHit:
     """Interior-overlap record for one JRC pixel touching a directed edge."""
 
-    overlap_m: float  # interior overlap in metres
-    depth_rp10: float  # depth (m); 0.0 for not-flooded pixels
+    overlap_m: float          # interior overlap in metres
+    depth_rp10: float         # depth (m) or NODATA_SENTINEL
     depth_rp20: float
     depth_rp100: float
-    cat_rp10: float  # RP10_depth_category: -1 = not_flooded, 2|3 = flooded
-    cat_rp20: float  # RP20_depth_category: -1 = not_flooded, 2|3 = flooded
-    cat_rp100: float  # RP100_depth_category: -1 = not_flooded, 2|3 = flooded
-    perm_water: float  # from DEPTH raster band 3: 0.0 = not permanent, 1.0 = permanent
-    spurious: float  # from DEPTH raster band 4: 0.0 = not flagged, >0 = flagged
+    cat_rp10: float           # depth_category value: NODATA_SENTINEL | _DRY_VAL | flood_val
+    cat_rp100: float
+    perm_water: float         # 1.0 = permanent water; -1.0 = not permanent
+    spurious: float           # spurious_depth_category value; -1 = not flagged
 
 
 @dataclass
 class JrcRpAttr:
     """JRC attribution for one directed edge at one return period."""
 
-    status: str  # no_overlap | outside_domain | modelled_dry | flooded
-    depth_max_m: float  # nan if no flood exposure
-    depth_wt_mean_m: float  # overlap-length-weighted mean depth; nan if no exposure
-    exposed_m: float  # interior overlap with non-permanent flooded pixels (m)
-    exposed_pct: float  # exposed_m / edge_length_m * 100
-    perm_water_m: float  # interior overlap with permanent-water pixels (m)
-    spurious: bool  # any spurious pixel in the interior overlap set
-    sample_n: int  # pixel hits with interior overlap >= MIN_INTERIOR_LEN_M
+    status: str               # no_overlap | outside_domain | modelled_dry | flooded
+    depth_max_m: float        # nan if no flood exposure
+    depth_wt_mean_m: float    # overlap-length-weighted mean depth; nan if no exposure
+    exposed_m: float          # interior overlap with non-permanent flooded pixels (m)
+    exposed_pct: float        # exposed_m / edge_length_m * 100
+    perm_water_m: float       # interior overlap with permanent-water pixels (m)
+    spurious: bool            # any spurious pixel in the interior overlap set
+    sample_n: int             # pixel hits with interior overlap >= MIN_INTERIOR_LEN_M
 
 
 @dataclass
@@ -133,8 +115,8 @@ class TerrainAttr:
     elev_min_m: float
     elev_mean_m: float
     elev_max_m: float
-    elev_change_m: float  # max - min elevation along edge
-    slope_pct: float  # elev_change_m / length_m * 100
+    elev_change_m: float      # max - min elevation along edge
+    slope_pct: float          # elev_change_m / length_m * 100
 
 
 @dataclass
@@ -149,34 +131,17 @@ class WaterwayAttr:
 
 @dataclass
 class PhaseBResult:
-    """Summary of the completed Phase B attribution run.
-
-    Exposure figures are reported at two levels:
-    - Directed edges: all directed edges; bidirectional pairs counted twice.
-    - Physical segments: unique (osm_id, edge_seq) pairs; each physical road
-      segment counted once regardless of travel direction.
-    """
+    """Summary of the completed Phase B attribution run."""
 
     municipality_code: str
     n_directed_edges: int
     n_physical_segments: int
-
-    # ── Directed-edge exposure (both directions counted) ───────────────────
-    n_exposed_dir_rp10: int  # directed edges with jrc_rp10_exposed_m > 0
-    n_exposed_dir_rp20: int
-    n_exposed_dir_rp100: int
-    total_exposed_dir_m_rp10: float  # sum of exposed_m over directed edges
-    total_exposed_dir_m_rp20: float
-    total_exposed_dir_m_rp100: float
-
-    # ── Physical-segment exposure (deduplicated) ───────────────────────────
-    n_exposed_phys_rp10: int  # unique physical segments with exposure > 0
-    n_exposed_phys_rp20: int
-    n_exposed_phys_rp100: int
-    total_exposed_phys_m_rp10: float  # sum of per-segment exposed_m (one per segment)
-    total_exposed_phys_m_rp20: float
-    total_exposed_phys_m_rp100: float
-
+    n_exposed_rp10: int       # edges with jrc_rp10_exposed_m > 0
+    n_exposed_rp20: int
+    n_exposed_rp100: int
+    total_exposed_m_rp10: float
+    total_exposed_m_rp20: float
+    total_exposed_m_rp100: float
     n_waterway_crossings: int
     output_graphml: Path
     output_gpkg: Path
@@ -207,8 +172,7 @@ def _pixel_hits(
     depth_arr:
         Full depth raster array, shape (5, H, W).
     cat_arr:
-        Full category raster array, shape (5, H, W), or None.
-        Bands: RP10_cat(0), RP20_cat(1), RP100_cat(2), perm_water(3), spurious(4).
+        Full category raster array, shape (4, H, W), or None.
     depth_transform:
         Affine transform for the depth raster.
     cat_transform:
@@ -259,17 +223,14 @@ def _pixel_hits(
             pw = float(depth_arr[_D_PW, row, col])
             sd = float(depth_arr[_D_SD, row, col])
 
-            # Category raster may use a different transform / size.
-            # Default to _NOT_FLOODED_CAT so missing coverage → not_flooded.
-            c10 = float(_NOT_FLOODED_CAT)
-            c20 = float(_NOT_FLOODED_CAT)
-            c100 = float(_NOT_FLOODED_CAT)
+            # Category raster may use a different transform / size
+            c10 = NODATA_SENTINEL
+            c100 = NODATA_SENTINEL
             if cat_arr is not None and cat_transform is not None:
                 cat_H, cat_W = cat_arr.shape[1], cat_arr.shape[2]
                 cr, cc = rasterio.transform.rowcol(cat_transform, px_x, px_y)
                 if 0 <= cr < cat_H and 0 <= cc < cat_W:
                     c10 = float(cat_arr[_C_RP10, cr, cc])
-                    c20 = float(cat_arr[_C_RP20, cr, cc])
                     c100 = float(cat_arr[_C_RP100, cr, cc])
 
             hits.append(
@@ -279,7 +240,6 @@ def _pixel_hits(
                     depth_rp20=d20,
                     depth_rp100=d100,
                     cat_rp10=c10,
-                    cat_rp20=c20,
                     cat_rp100=c100,
                     perm_water=pw,
                     spurious=sd,
@@ -300,15 +260,8 @@ def _jrc_rp_attr(
 ) -> JrcRpAttr:
     """Compute JrcRpAttr for one return period from pixel hits.
 
-    Three-state status determination:
-      outside_domain — all hits have depth == NODATA_SENTINEL (-9999):
-                       no valid hydraulic model output for this pixel
-      modelled_dry   — at least one hit is within the model domain
-                       (depth ≠ -9999) but none have cat ∈ {2, 3}
-      flooded        — at least one hit has cat ∈ {2, 3}
-
-    RP20 uses ``cat_rp20`` from the PixelHit, read directly from the acquired
-    RP20_depth_category band — no inference from RP10 is performed.
+    Uses three-state semantics.  RP20 borrows domain indicator from RP10
+    category band (model domain is constant across return periods).
     """
     nan = float("nan")
 
@@ -329,27 +282,38 @@ def _jrc_rp_attr(
     spurious = False
     weighted_depth = 0.0
     depth_max = nan
-    any_flooded = False
-    any_in_domain = False  # depth ≠ NODATA_SENTINEL → within model domain
+
+    statuses: list[str] = []
 
     for h in hits:
+        # Determine pixel state for this RP
         if rp == "RP10":
             depth = h.depth_rp10
             cat = h.cat_rp10
+            is_flooded = float(cat) in _FLOOD_VALS
+            is_outside = float(cat) == NODATA_SENTINEL
         elif rp == "RP20":
             depth = h.depth_rp20
-            cat = h.cat_rp20
+            # Infer domain from RP10 category
+            is_outside = float(h.cat_rp10) == NODATA_SENTINEL
+            is_flooded = (not is_outside) and (depth != NODATA_SENTINEL) and (depth > 0)
+            cat = h.cat_rp10  # domain indicator only
         else:  # RP100
             depth = h.depth_rp100
             cat = h.cat_rp100
+            is_flooded = float(cat) in _FLOOD_VALS
+            is_outside = float(cat) == NODATA_SENTINEL
 
-        if depth != NODATA_SENTINEL:
-            any_in_domain = True
+        is_dry = (not is_flooded) and (not is_outside)
 
-        is_flooded = int(cat) in _FLOOD_VALS
+        if is_outside:
+            statuses.append("outside_domain")
+        elif is_dry:
+            statuses.append("modelled_dry")
+        else:
+            statuses.append("flooded")
 
         if is_flooded:
-            any_flooded = True
             is_perm = h.perm_water == 1.0
             if is_perm:
                 perm_water_m += h.overlap_m
@@ -362,12 +326,18 @@ def _jrc_rp_attr(
         if h.spurious > 0:
             spurious = True
 
-    if any_flooded:
+    # Determine edge-level status
+    unique = set(statuses)
+    if unique == {"outside_domain"}:
+        status = "outside_domain"
+    elif "flooded" in unique:
         status = "flooded"
-    elif any_in_domain:
+    elif "modelled_dry" in unique:
         status = "modelled_dry"
     else:
         status = "outside_domain"
+
+    total_overlap = sum(h.overlap_m for h in hits)
     depth_wt_mean = (weighted_depth / exposed_m) if exposed_m > 0 else nan
     exposed_pct = (exposed_m / edge_length_m * 100) if edge_length_m > 0 else 0.0
 
@@ -393,7 +363,10 @@ def _terrain_attr(
 ) -> TerrainAttr | None:
     """Sample DEM at evenly-spaced points along the edge and compute stats."""
     n_pts = max(3, min(_DEM_SAMPLE_PTS, int(edge_length_m / 5) + 2))
-    pts = [edge_geom_utm.interpolate(t, normalized=True) for t in np.linspace(0, 1, n_pts)]
+    pts = [
+        edge_geom_utm.interpolate(t, normalized=True)
+        for t in np.linspace(0, 1, n_pts)
+    ]
     xy = [(pt.x, pt.y) for pt in pts]
     nodata = dem_src.nodata
 
@@ -565,8 +538,7 @@ def run_phase_b(
     depth_raster:
         5-band JRC depth GeoTIFF (RP10/RP20/RP100/perm_water/spurious).
     cat_raster:
-        5-band JRC category GeoTIFF
-        (RP10_cat/RP20_cat/RP100_cat/perm_water/spurious).
+        4-band JRC category GeoTIFF (RP10_cat/RP100_cat/perm_water/spurious).
     municipality_pcode:
         PSA adm3_pcode (only PH0600613 is READY for Phase B).
     dem_path:
@@ -612,12 +584,13 @@ def run_phase_b(
     # ── 3. Load JRC rasters fully into memory ──────────────────────────────
     logger.info("Loading JRC depth raster: %s", depth_raster)
     with rasterio.open(depth_raster) as src:
-        depth_arr = src.read().astype(np.float32)  # (5, H, W)
+        depth_arr = src.read().astype(np.float32)   # (5, H, W)
         depth_transform = src.transform
+        depth_crs = src.crs
 
     logger.info("Loading JRC category raster: %s", cat_raster)
     with rasterio.open(cat_raster) as src:
-        cat_arr = src.read().astype(np.float32)  # (5, H, W)
+        cat_arr = src.read().astype(np.float32)     # (4, H, W)
         cat_transform = src.transform
 
     # ── 4. Prepare reprojector UTM→WGS84 ──────────────────────────────────
@@ -737,79 +710,44 @@ def run_phase_b(
     write_graphml(G, out_graphml)
 
     logger.info("Writing enriched GeoPackage: %s", out_gpkg)
-    # Build enriched GeoDataFrame from edges_utm + phase_b_attrs so that all
-    # Phase B columns (jrc_*, terrain_*, waterway_*, network_*) are included.
-    enriched_rows = []
-    for _idx, erow in edges_utm.iterrows():
-        key = (int(erow["u_node"]), int(erow["v_node"]), int(erow["edge_key"]))
-        rec = dict(erow)
-        rec.update(phase_b_attrs.get(key, {}))
-        enriched_rows.append(rec)
-    enriched_gdf = gpd.GeoDataFrame(enriched_rows, geometry="geometry", crs=edges_utm.crs)
-    enriched_gdf = enriched_gdf.sort_values(["osm_id", "edge_seq"], ignore_index=True)
-    enriched_gdf.to_file(out_gpkg, driver="GPKG", layer="edges")
-    logger.info("Wrote enriched GeoPackage: %s (%d edges)", out_gpkg, len(enriched_gdf))
+    write_edges_gpkg(G, out_gpkg)
 
     sha_graphml = _sha256(out_graphml)
     sha_gpkg = _sha256(out_gpkg)
 
     # ── 10. Compute summary statistics ─────────────────────────────────────
+    n_exposed_rp10 = sum(
+        1 for a in phase_b_attrs.values() if a.get("jrc_rp10_exposed_m", 0) > 0
+    )
+    n_exposed_rp20 = sum(
+        1 for a in phase_b_attrs.values() if a.get("jrc_rp20_exposed_m", 0) > 0
+    )
+    n_exposed_rp100 = sum(
+        1 for a in phase_b_attrs.values() if a.get("jrc_rp100_exposed_m", 0) > 0
+    )
+    total_m_rp10 = sum(a.get("jrc_rp10_exposed_m", 0) for a in phase_b_attrs.values())
+    total_m_rp20 = sum(a.get("jrc_rp20_exposed_m", 0) for a in phase_b_attrs.values())
+    total_m_rp100 = sum(a.get("jrc_rp100_exposed_m", 0) for a in phase_b_attrs.values())
+    n_crossings = sum(
+        1 for a in phase_b_attrs.values() if a.get("waterway_crossing", 0)
+    )
 
-    # Directed-edge exposure (both directions counted independently)
-    n_exp_dir10 = sum(1 for a in phase_b_attrs.values() if a.get("jrc_rp10_exposed_m", 0) > 0)
-    n_exp_dir20 = sum(1 for a in phase_b_attrs.values() if a.get("jrc_rp20_exposed_m", 0) > 0)
-    n_exp_dir100 = sum(1 for a in phase_b_attrs.values() if a.get("jrc_rp100_exposed_m", 0) > 0)
-    tot_dir10 = sum(a.get("jrc_rp10_exposed_m", 0) for a in phase_b_attrs.values())
-    tot_dir20 = sum(a.get("jrc_rp20_exposed_m", 0) for a in phase_b_attrs.values())
-    tot_dir100 = sum(a.get("jrc_rp100_exposed_m", 0) for a in phase_b_attrs.values())
-    n_crossings = sum(1 for a in phase_b_attrs.values() if a.get("waterway_crossing", 0))
-
-    # Build edge-key → (osm_id, edge_seq) mapping for deduplication
-    edge_to_phys: dict[tuple[int, int, int], tuple[Any, Any]] = {}
-    for _erow_idx, erow in edges_utm.iterrows():
-        key = (int(erow["u_node"]), int(erow["v_node"]), int(erow["edge_key"]))
-        edge_to_phys[key] = (erow.get("osm_id"), erow.get("edge_seq"))
-
-    # Physical-segment exposure: per (osm_id, edge_seq) keep the max exposed_m
-    # across directed edges of the same physical segment.  For geometrically
-    # identical bidirectional pairs the values will be equal; max() is used as
-    # a safe aggregation in case of floating-point rounding asymmetry.
-    phys_exp10: dict[tuple, float] = {}
-    phys_exp20: dict[tuple, float] = {}
-    phys_exp100: dict[tuple, float] = {}
-    phys_all: set[tuple] = set()
-
-    for edge_key, attrs in phase_b_attrs.items():
-        pkey = edge_to_phys.get(edge_key, (None, None))
-        phys_all.add(pkey)
-        phys_exp10[pkey] = max(phys_exp10.get(pkey, 0.0), attrs.get("jrc_rp10_exposed_m", 0.0))
-        phys_exp20[pkey] = max(phys_exp20.get(pkey, 0.0), attrs.get("jrc_rp20_exposed_m", 0.0))
-        phys_exp100[pkey] = max(phys_exp100.get(pkey, 0.0), attrs.get("jrc_rp100_exposed_m", 0.0))
-
-    n_physical = len(phys_all)
-    n_exp_phys10 = sum(1 for v in phys_exp10.values() if v > 0)
-    n_exp_phys20 = sum(1 for v in phys_exp20.values() if v > 0)
-    n_exp_phys100 = sum(1 for v in phys_exp100.values() if v > 0)
-    tot_phys10 = sum(phys_exp10.values())
-    tot_phys20 = sum(phys_exp20.values())
-    tot_phys100 = sum(phys_exp100.values())
+    # Physical segment count (deduplicate bidirectional pairs)
+    phys_keys: set[tuple[Any, Any]] = set()
+    for erow_idx, erow in edges_utm.iterrows():
+        phys_keys.add((erow.get("osm_id"), erow.get("edge_seq")))
+    n_physical = len(phys_keys)
 
     result = PhaseBResult(
         municipality_code=municipality_pcode,
         n_directed_edges=len(phase_b_attrs),
         n_physical_segments=n_physical,
-        n_exposed_dir_rp10=n_exp_dir10,
-        n_exposed_dir_rp20=n_exp_dir20,
-        n_exposed_dir_rp100=n_exp_dir100,
-        total_exposed_dir_m_rp10=round(tot_dir10, 2),
-        total_exposed_dir_m_rp20=round(tot_dir20, 2),
-        total_exposed_dir_m_rp100=round(tot_dir100, 2),
-        n_exposed_phys_rp10=n_exp_phys10,
-        n_exposed_phys_rp20=n_exp_phys20,
-        n_exposed_phys_rp100=n_exp_phys100,
-        total_exposed_phys_m_rp10=round(tot_phys10, 2),
-        total_exposed_phys_m_rp20=round(tot_phys20, 2),
-        total_exposed_phys_m_rp100=round(tot_phys100, 2),
+        n_exposed_rp10=n_exposed_rp10,
+        n_exposed_rp20=n_exposed_rp20,
+        n_exposed_rp100=n_exposed_rp100,
+        total_exposed_m_rp10=round(total_m_rp10, 2),
+        total_exposed_m_rp20=round(total_m_rp20, 2),
+        total_exposed_m_rp100=round(total_m_rp100, 2),
         n_waterway_crossings=n_crossings,
         output_graphml=out_graphml,
         output_gpkg=out_gpkg,
@@ -818,18 +756,13 @@ def run_phase_b(
     )
 
     logger.info(
-        "Phase B complete: %d edges attributed, "
-        "RP10 exposed dir=%d (%.1f m) phys=%d (%.1f m), "
-        "RP100 exposed dir=%d (%.1f m) phys=%d (%.1f m), crossings=%d",
+        "Phase B complete: %d edges attributed, RP10 exposed=%d (%.1f m), "
+        "RP100 exposed=%d (%.1f m), crossings=%d",
         result.n_directed_edges,
-        n_exp_dir10,
-        tot_dir10,
-        n_exp_phys10,
-        tot_phys10,
-        n_exp_dir100,
-        tot_dir100,
-        n_exp_phys100,
-        tot_phys100,
+        n_exposed_rp10,
+        total_m_rp10,
+        n_exposed_rp100,
+        total_m_rp100,
         n_crossings,
     )
     return result

@@ -322,40 +322,96 @@ candidates:
       Classified project_only — ineligible for routing until formal designation.
       Skipped by the snap pipeline because project_only makes it ineligible.
 
+  - shelter_id: SJDB-005
+    name: "Funda-Dalipe Barangay Evacuation Center"
+    barangay_name: "Funda-Dalipe"
+    facility_type: evacuation_center   # per OSM name; building type not independently verified
+    evidence_tier: C
+    operational_status: unknown   # OSM-only evidence; no post-mapping source confirms
+                                  # current operational status. unknown is the conservative default.
+    verification_status: unverified
+    source_title: "OpenStreetMap — node:12884911346 (name: 'Brgy. Funda-Dalipe Evacuation Center')"
+    source_url: null
+    issuing_office: null
+    source_date: "unknown"   # OSM feature; creation date not extracted from PBF
+    coordinates:
+      latitude: 10.76385      # OSM node:12884911346 location
+      longitude: 121.93830
+      entrance_latitude: null   # no entrance documented
+      entrance_longitude: null
+      coordinate_source: "OpenStreetMap node:12884911346"
+      coordinate_method: "osm_node_location"
+      coordinate_uncertainty_m: 50   # OSM point location; not field-validated
+    entrance_status: missing   # no entrance coordinates available
+    snap_status: skipped   # ineligible (operational_status=unknown) and no entrance;
+                           # pipeline skips before entrance check
+    # Graph-proximity note (research reference, not a pipeline snap result):
+    #   Centroid (10.76385, 121.93830) is 46 m from road-graph node 593 (UTM distance).
+    #   This is a centroid-to-node reference, not an entrance-based snap.
+    #   Node 593 is approximately 932 m from scenario shelter node 58 — distinct location.
+    readiness_contribution:
+      eligible: false   # operational_status=unknown → ineligible
+      routable: false   # no entrance coordinates; entrance check not reached
+      verified: false   # verification_status=unverified
+      auth_capacity: false   # official_capacity=null
+    notes: >
+      OSM research lead — source of record is OpenStreetMap node:12884911346, which carries
+      the name 'Brgy. Funda-Dalipe Evacuation Center'.  An adjacent OSM node:12884911345
+      is labelled 'Funda-Dalipe Barangay Hall' (amenity=townhall), approximately 10 m away;
+      the two may represent the hall and its designated evacuation area, or separate structures
+      in the same barangay compound.  Building type not independently verified.
+
+      No secondary source document available in the repository — OSM contributor identity
+      and contribution date are unknown.  Classification as designation_type=candidate_only
+      is conservative: OSM name alone does not establish formal LGU designation or verified
+      historical activation.
+
+      To upgrade: obtain a citable source document (LGU resolution, MDRRMO plan, news report,
+      or confirmed barangay DRRM plan) establishing that this location has been formally
+      designated or historically activated as an evacuation venue.
+
+      Graph-proximity note: the centroid is 46 m from road-graph node 593 (research reference;
+      not a pipeline snap).  Node 593 is approximately 932 m from scenario shelter node 58 —
+      these are distinct geographic locations.
+
 # ---------------------------------------------------------------------------
-# Aggregate readiness state (as of Stage 6B)
+# Aggregate readiness state (as of Stage 7 OSM audit, 2026-08-30)
 # ---------------------------------------------------------------------------
 
 readiness_state:
-  # Produced by: floodroute snap-shelters (Stage 6B pipeline, 2026-08-28)
-  # Updated by: temporal-validity audit of SJDB-001 (2026-08-28)
+  # Updated by: Stage 7 OSM facility audit (2026-08-30) — SJDB-005 added
+  # Previously produced by: floodroute snap-shelters (Stage 6B, 2026-08-28)
   decision: BLOCKED
-  n_total: 4
-  n_eligible: 0     # SJDB-001=unknown (ineligible), SJDB-002=unknown, SJDB-003/004=project_only
+  n_total: 5
+  n_eligible: 0     # SJDB-001/002/005=unknown (ineligible), SJDB-003/004=project_only
   n_routable: 0     # no eligible record reaches the entrance-coordinate check
   n_partial_candidates: 0   # eligible + routable; need ≥2 for PARTIAL
   n_ready_candidates: 0     # eligible + routable + verified + auth_cap
   n_verified: 0     # no candidate has verification_status=verified
   n_auth_capacity: 0  # no candidate has official_capacity with authoritative provenance
   reason: >
-    All four candidates are ineligible: SJDB-001 and SJDB-002 have operational_status=unknown;
-    SJDB-003 and SJDB-004 have operational_status=project_only.  SJDB-001 operational_status
-    was corrected from 'operational' to 'unknown' during the 2026-08-28 temporal-validity
-    audit — the 2019 OCD/DPWH PNA article is historical evidence only; no post-2019 source
-    confirms 2026 availability.  Zero eligible candidates; PARTIAL requires ≥2 eligible+routable.
+    All five candidates are ineligible: SJDB-001, SJDB-002, and SJDB-005 have
+    operational_status=unknown; SJDB-003 and SJDB-004 have operational_status=project_only.
+    SJDB-005 (Funda-Dalipe Barangay Evacuation Center) was added from OSM node:12884911346
+    during Stage 7 audit (2026-08-30) — OSM-only evidence, no independent source document.
+    SJDB-001 operational_status remains unknown: the 2019 OCD/DPWH PNA article is
+    historical evidence only; no post-2019 source confirms 2026 availability.
+    Zero eligible candidates; PARTIAL requires ≥2 eligible+routable.
   snap_results_summary:
     SJDB-001: "skipped — ineligible (unknown operational_status), entrance proxy present but not used"
     SJDB-002: "skipped — ineligible (unknown), no coordinates"
     SJDB-003: "skipped — ineligible (project_only), no coordinates"
     SJDB-004: "skipped — ineligible (project_only), no coordinates"
+    SJDB-005: "skipped — ineligible (unknown operational_status), no entrance coordinates"
   stage_6b_software_status: >
     Fully implemented and tested (snap.py, containment.py, phase_b.py, snap-shelters CLI,
     54 unit tests passing).  Pipeline ran successfully on 2026-08-28.
   path_to_partial: >
     Confirm current operational status of SJDB-001 directly with MDRRMO/LGU and update
     operational_status to 'operational' or 'standby'.  Then locate or confirm a second
-    eligible facility (e.g. confirm SJDB-002 is currently operational).  Both eligible
-    candidates must have entrance coordinates to reach PARTIAL.
+    eligible facility (e.g. verify SJDB-005 via a citable source and confirm it is currently
+    operational; or confirm SJDB-002 is currently operational).  Both eligible candidates
+    must have entrance coordinates to reach PARTIAL.
   path_to_ready: >
     Two or more candidates must be: eligible, routable, verification_status=verified, and
     have official_capacity with capacity_provenance=authoritative.  This requires formal

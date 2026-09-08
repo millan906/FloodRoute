@@ -14,7 +14,7 @@ edge *unavailable* to the router (weight function returns ``None``).
                    Within the hydraulic model domain; actively classified as
                    not inundated.  Full positive evidence of safety.
 
-  flooded        → penalised cost (length_m × FLOOD_MULTIPLIER)
+  flooded        → penalised cost (length_m × flood_penalty)
                    Within the domain; actively classified as inundated.
 
   no_overlap     → unavailable (None)
@@ -48,12 +48,30 @@ Design notes
   ``{edge_key: attr_dict}`` and returns the minimum finite cost across all
   available parallel edges, or ``None`` when every parallel edge is
   unavailable.  Returning ``None`` causes NetworkX to skip the edge entirely.
+
+Configurable flood penalty
+--------------------------
+``make_weight_fn`` accepts a ``flood_penalty`` parameter of type
+``FloodPolicy``.  When ``flood_penalty`` is a float, flooded edges receive
+cost ``length_m × flood_penalty``.  When ``flood_penalty == "prohibited"``,
+flooded edges are treated as unavailable (same as ``no_overlap``).
+
+The production default ``flood_penalty=10.0`` reproduces the original
+behaviour exactly (``FLOOD_MULTIPLIER = 10.0``).
 """
 
 from __future__ import annotations
 
+#: Type alias for flood penalty specification.
+#: float  → penalty multiplier (e.g. 1.0, 5.0, 10.0, 20.0)
+#: "prohibited" → flooded edges blocked entirely (unavailable)
+FloodPolicy = float | str
+
 FLOOD_MULTIPLIER: float = 10.0
-"""Cost multiplier applied to edges classified as flooded."""
+"""Production default cost multiplier applied to edges classified as flooded."""
+
+VALID_FLOOD_PENALTIES: tuple = (1.0, 5.0, 10.0, 20.0, "prohibited")
+"""Recognised flood-penalty values for experiments."""
 
 _PENALISED_STATUSES: frozenset[str] = frozenset({"flooded"})
 """Status values that attract the flood penalty."""
@@ -92,6 +110,10 @@ def edge_cost(attrs: dict, return_period: str = "RP100") -> float | None:
     -----
     A ``None`` return signals to ``make_weight_fn`` (and via it to NetworkX
     Dijkstra) that this edge should be skipped entirely.
+
+    This function always uses ``FLOOD_MULTIPLIER`` (10.0) for the flood
+    penalty.  For configurable penalties, use ``make_weight_fn`` with the
+    ``flood_penalty`` parameter.
     """
     rp_key = f"jrc_{return_period.lower()}_status"
     status = attrs.get(rp_key)  # None when key absent or value is None
@@ -107,7 +129,10 @@ def edge_cost(attrs: dict, return_period: str = "RP100") -> float | None:
     return length
 
 
-def make_weight_fn(return_period: str = "RP100"):
+def make_weight_fn(
+    return_period: str = "RP100",
+    flood_penalty: FloodPolicy = 10.0,
+):
     """Return a Dijkstra weight function for a NetworkX MultiDiGraph.
 
     The returned callable is compatible with ``nx.single_source_dijkstra``
@@ -123,14 +148,26 @@ def make_weight_fn(return_period: str = "RP100"):
     ----------
     return_period:
         Flood scenario to use for the penalty lookup.
+    flood_penalty:
+        Flood-penalty policy.  Pass a float (e.g. ``10.0``) to multiply
+        flooded edge lengths by that factor.  Pass ``"prohibited"`` to treat
+        flooded edges as unavailable (blocked entirely).  The production
+        default ``10.0`` reproduces the original FLOOD_MULTIPLIER behaviour.
     """
+    rp_key = f"jrc_{return_period.lower()}_status"
+    prohibited = flood_penalty == "prohibited"
+    penalty: float = 0.0 if prohibited else float(flood_penalty)
 
     def _weight(u: object, v: object, d: dict) -> float | None:
         best: float | None = None
         for attrs in d.values():
-            c = edge_cost(attrs, return_period)
-            if c is None:
-                continue
+            status = attrs.get(rp_key)
+            if status not in _PENALISED_STATUSES and status not in _ORDINARY_STATUSES:
+                continue  # unavailable edge
+            if status in _PENALISED_STATUSES and prohibited:
+                continue  # flooded + prohibited → unavailable
+            length = float(attrs.get("length_m") or 0.0)
+            c = length * penalty if status in _PENALISED_STATUSES else length
             if best is None or c < best:
                 best = c
         return best

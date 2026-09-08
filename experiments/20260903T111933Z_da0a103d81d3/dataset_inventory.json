@@ -1,0 +1,26 @@
+[
+  {
+    "role": "population_csv",
+    "path": "data/raw/psa_barangay_population_sjdb_2020.csv",
+    "sha256": "a604b53ac4b4241dd28cc8f2a5b8f90f167a2fe4ad4311626e6e633be08f5abd",
+    "exists": true
+  },
+  {
+    "role": "road_graph",
+    "path": "data/processed/hazard/PH0600613_phase_b_enriched.graphml",
+    "sha256": "ae567623861e7820a82d6c0662654c371565d424d49635b44789607c206f3c3e",
+    "exists": true
+  },
+  {
+    "role": "barangay_boundaries",
+    "path": "data/processed/admin/barangays_utm51n.gpkg",
+    "sha256": "b18c3af7155b35f34d3ace8c46b07f5b8355005172788355e18f893f4388b50b",
+    "exists": true
+  },
+  {
+    "role": "nodes_gpkg",
+    "path": "data/processed/graph/PH0600613_nodes.gpkg",
+    "sha256": "33c02a1be632c7f9141562539d7b50f5b06e5e2f526526b41aecf9cd9eca4640",
+    "exists": true
+  }
+]

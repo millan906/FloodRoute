@@ -1,0 +1,13 @@
+algorithm,rp,frac,mult,penalty,origin_node,reason
+A,RP100,0.25,1.0,10.0,1493,unreachable
+A,RP100,0.25,1.0,10.0,421,unreachable
+A,RP100,0.25,1.0,10.0,515,unreachable
+B,RP100,0.25,1.0,10.0,1493,unreachable
+B,RP100,0.25,1.0,10.0,421,unreachable
+B,RP100,0.25,1.0,10.0,515,unreachable
+B+,RP100,0.25,1.0,10.0,1493,unreachable
+B+,RP100,0.25,1.0,10.0,421,unreachable
+B+,RP100,0.25,1.0,10.0,515,unreachable
+C,RP100,0.25,1.0,10.0,1493,unreachable
+C,RP100,0.25,1.0,10.0,421,unreachable
+C,RP100,0.25,1.0,10.0,515,unreachable

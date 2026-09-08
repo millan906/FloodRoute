@@ -384,9 +384,20 @@ class TestSolveAssignment:
 
     # --- validation ---
 
-    def test_node_in_both_demands_and_capacities_raises(self):
-        with pytest.raises(ValueError, match="both demands and capacities"):
-            solve_assignment({0: 5, 1: 3}, {1: 10}, {(0, 1): 5.0}, {(0, 1): [0, 1]})
+    def test_colocated_origin_shelter_does_not_raise(self):
+        # Node 1 appears in both demands (pop 3) and capacities (cap 10).
+        # The flow network namespaces them as ("origin",1) and ("shelter",1),
+        # so no collision occurs.  Origin 0 reaches shelter 1 (cost 5.0);
+        # origin 1 reaches shelter 1 with cost 0.0 (self-path).
+        od_costs = {(0, 1): 5.0, (1, 1): 0.0}
+        od_routes = {(0, 1): [0, 1], (1, 1): [1]}
+        result = solve_assignment({0: 5, 1: 3}, {1: 10}, od_costs, od_routes)
+        assert result.total_assigned == 8
+        assert result.total_unassigned == 0
+        assert result.assignments[(0, 1)] == 5
+        assert result.assignments[(1, 1)] == 3
+        assert result.shelter_loads[1] == 8
+        assert result.capacity_violations == []
 
     # --- determinism ---
 

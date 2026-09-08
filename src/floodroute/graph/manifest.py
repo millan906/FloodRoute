@@ -45,7 +45,6 @@ def build_graph_manifest(
     parameters: dict[str, Any],
     build_stats: dict[str, Any],
     graph_stats: dict[str, Any],
-    validation_thresholds: dict[str, Any],
     output_graphml_path: Path,
     output_nodes_gpkg_path: Path,
     output_edges_gpkg_path: Path,
@@ -67,7 +66,6 @@ def build_graph_manifest(
         "software": _sw_versions(),
         "build_stats": build_stats,
         "graph_stats": graph_stats,
-        "validation_thresholds": validation_thresholds,
         "outputs": {
             "graphml": {
                 "path": str(output_graphml_path),

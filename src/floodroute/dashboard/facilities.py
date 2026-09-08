@@ -9,12 +9,12 @@ the CSV exactly and is version-controlled so the dashboard remains consistent ac
 environments.  It must be kept in sync with any CSV updates manually.
 
 No facility is invented, inferred, or added without a citable source record.
-``FACILITY_REGISTRY`` contains exactly the four rows from the CSV.
+``FACILITY_REGISTRY`` contains exactly the five rows from the CSV.
 
 Source file  : data/raw/sjdb_evacuation_shelters.csv  (gitignored; use this file as reference)
 Manifest     : data/manifests/sjdb_evacuation_shelters.yaml
 Registry PSGC: PH0600613 (San Jose de Buenavista, Antique)
-Readiness    : BLOCKED — all four candidates ineligible.
+Readiness    : BLOCKED — all five candidates ineligible.
 
 Reference layer only
 --------------------
@@ -212,11 +212,12 @@ class FacilityRecord:
 # source_url, source_date, issuing_office, coordinate_source,
 # coordinate_method, coordinate_uncertainty_m, notes (selected fields).
 #
-# Manifest readiness: BLOCKED — all four candidates ineligible.
+# Manifest readiness: BLOCKED — all five candidates ineligible.
 #   SJDB-001 operational_status=unknown (2019 turnover = historical evidence only).
 #   SJDB-002 operational_status=unknown (community report, no official docs).
 #   SJDB-003 operational_status=project_only (draft contingency plan reference).
 #   SJDB-004 operational_status=project_only (informal barangay plan mention).
+#   SJDB-005 operational_status=unknown (OSM-tagged name only; no independent source).
 # ---------------------------------------------------------------------------
 
 FACILITY_REGISTRY: list[FacilityRecord] = [
@@ -383,9 +384,63 @@ FACILITY_REGISTRY: list[FacilityRecord] = [
         source_date="2022",
         issuing_office=None,
     ),
+    # ------------------------------------------------------------------
+    # SJDB-005 — Funda-Dalipe Barangay Evacuation Center
+    # Source: OpenStreetMap node/12884911346 tagged with name
+    #         "Brgy. Funda-Dalipe Evacuation Center"; adjacent to
+    #         node/12884911345 "Funda-Dalipe Barangay Hall" (amenity=townhall).
+    # operational_status=unknown: OSM-only evidence; no independent source
+    #   document available in the repository. Name implies evacuation use
+    #   but cannot confirm current operational status from OSM alone.
+    # designation_type=candidate_only: no citable designation document;
+    #   OSM name alone does not establish formal LGU designation or
+    #   verified historical activation.
+    # Coordinates: OSM node centroid; building type unverified from OSM.
+    # Graph proximity note (research reference):
+    #   Node centroid (10.76385, 121.93830) → nearest road-graph node 593
+    #   at 46 m (UTM distance). Not a pipeline snap; entrance not documented.
+    #   Node 593 ≈ 932 m from scenario shelter node 58 — different location.
+    # ------------------------------------------------------------------
+    FacilityRecord(
+        facility_id="SJDB-005",
+        facility_name="Funda-Dalipe Barangay Evacuation Center",
+        barangay_name="Funda-Dalipe",
+        facility_type="evacuation_center",
+        latitude=10.76385,
+        longitude=121.93830,
+        coordinate_source="OpenStreetMap node:12884911346",
+        coordinate_method="osm_node_location",
+        coordinate_uncertainty_m=50.0,
+        designation_type="candidate_only",
+        designation_source=(
+            "OpenStreetMap node:12884911346 — name 'Brgy. Funda-Dalipe Evacuation Center' "
+            "(no independent designation document; OSM contributor and date unknown)"
+        ),
+        operational_status="unknown",
+        verification_status="unverified",
+        evidence_tier="C",
+        entrance_lat=None,
+        entrance_lon=None,
+        entrance_status="missing",
+        # Research reference — centroid-to-node proximity; no entrance documented.
+        snapped_node_id=593,
+        snap_distance_m=46.0,
+        snap_is_pipeline_result=False,
+        official_capacity=None,
+        historical_capacity_note=None,
+        source_title=(
+            "OpenStreetMap — node:12884911346 (name: 'Brgy. Funda-Dalipe Evacuation Center')"
+        ),
+        source_url=None,
+        source_date="unknown",
+        issuing_office=None,
+    ),
 ]
 
 
 def get_facility_by_id(facility_id: str) -> FacilityRecord | None:
+    """Return the FacilityRecord for *facility_id*, or ``None`` if not found."""
+    return next((f for f in FACILITY_REGISTRY if f.facility_id == facility_id), None)
+
     """Return the FacilityRecord for *facility_id*, or ``None`` if not found."""
     return next((f for f in FACILITY_REGISTRY if f.facility_id == facility_id), None)
