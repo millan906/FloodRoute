@@ -1156,10 +1156,6 @@ def run_analysis(
         bool,
         typer.Option("--force", help="Overwrite existing graph outputs."),
     ] = False,
-    log_level: Annotated[
-        str,
-        typer.Option("--log-level", help="Logging level."),
-    ] = "INFO",
 ) -> None:
     """Build directed road-network graphs from Stage 3 road layers (Stage 4)."""
     configure_logging(log_level)
@@ -1477,10 +1473,12 @@ def run_analysis(
     log_level: Annotated[
         str,
         typer.Option("--log-level", help="Logging level."),
-
-
-
-
+    ] = "INFO",
+) -> None:
+    """Run the core routing and shelter-allocation analysis (Stage 3+)."""
+    configure_logging(log_level)  # type: ignore[arg-type]
+    logger.warning("run-analysis called but data layer is absent.")
+    typer.echo(
 
 
 
@@ -1547,6 +1545,11 @@ def run_experiment(
     ] = None,
     log_level: Annotated[
         str,
+        typer.Option("--log-level", help="Logging level."),
+    ] = "INFO",
+) -> None:
+    """Execute a named experiment (Stage 3+)."""
+    configure_logging(log_level)  # type: ignore[arg-type]
     logger.warning("run-experiment called but prerequisites are absent.")
     typer.echo(
         "ERROR: run-experiment requires the full analysis pipeline (Stages 1–3). "
@@ -1769,90 +1772,93 @@ def inspect_hazard(
     typer.echo("")
 
 
-# ---------------------------------------------------------------------------
-# Entrypoint
-# ---------------------------------------------------------------------------
-
-if __name__ == "__main__":
-    app()
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+_DEFAULT_GRAPH = _DEFAULT_DATA / "processed" / "graph"
+_DEFAULT_HAZARD_EDGES = _DEFAULT_GRAPH / "PH0600613_edges.gpkg"
+_DEFAULT_HAZARD_GRAPH = _DEFAULT_GRAPH / "PH0600613_graph.graphml"
+_DEFAULT_JRC_DEPTH_613 = _DEFAULT_JRC_RAW / "ph0600613_jrc_glofas_v21_raw.tif"
+_DEFAULT_JRC_CAT_613 = _DEFAULT_JRC_RAW / "ph0600613_jrc_glofas_v21_categories.tif"
+_DEFAULT_DEM_613 = _DEFAULT_DATA / "processed" / "dem" / "PH0600613_dem_utm51n.tif"
+_DEFAULT_WW_613 = _DEFAULT_DATA / "processed" / "osm" / "PH0600613_waterways_utm51n.gpkg"
+
+
+@app.command("integrate-hazard")
+def integrate_hazard(
+    graph_path: Annotated[
+        Path,
+        typer.Option("--graph", help="Stage 4 GraphML (EPSG:32651)."),
+    ] = _DEFAULT_HAZARD_GRAPH,
+    edges_gpkg: Annotated[
+        Path,
+        typer.Option("--edges-gpkg", help="Stage 4 edges GeoPackage."),
+    ] = _DEFAULT_HAZARD_EDGES,
+    depth_raster: Annotated[
+        Path,
+        typer.Option("--depth-raster", help="5-band JRC depth GeoTIFF."),
+    ] = _DEFAULT_JRC_DEPTH_613,
+    cat_raster: Annotated[
+        Path,
+        typer.Option("--cat-raster", help="4-band JRC category GeoTIFF."),
+    ] = _DEFAULT_JRC_CAT_613,
+    dem_path: Annotated[
+        Path | None,
+        typer.Option("--dem", help="Copernicus DEM GeoTIFF (EPSG:32651, optional)."),
+    ] = None,
+    waterway_path: Annotated[
+        Path | None,
+        typer.Option("--waterways", help="OSM waterway GeoPackage (EPSG:32651, optional)."),
+    ] = None,
+    output_dir: Annotated[
+        Path,
+        typer.Option("--output-dir", help="Directory for enriched GraphML + GeoPackage."),
+    ] = _DEFAULT_HAZARD_OUT,
+    force: Annotated[
+        bool,
+        typer.Option("--force/--no-force", help="Overwrite existing outputs."),
+    ] = False,
+    log_level: Annotated[
+        str,
+        typer.Option("--log-level", help="Logging level."),
+    ] = "INFO",
+) -> None:
+    """Run Stage 5B: attribute PH0600613 road graph with JRC flood, terrain and waterway evidence.
+
+    Produces:
+      PH0600613_phase_b_enriched.graphml  — topology + all Phase B attributes
+      PH0600613_phase_b_enriched.gpkg     — geometry + all Phase B attributes
+
+    Phase B is only permitted for PH0600613 (San Jose de Buenavista, READY).
+    Sibalom (PH0600616) is BLOCKED; Hamtic (PH0600608) is PARTIAL.
+    """
+    configure_logging(log_level)  # type: ignore[arg-type]
+
+    _dem = dem_path or (_DEFAULT_DEM_613 if _DEFAULT_DEM_613.exists() else None)
+    _ww = waterway_path or (_DEFAULT_WW_613 if _DEFAULT_WW_613.exists() else None)
+
+    for label, p in [
+        ("graph", graph_path),
+        ("edges-gpkg", edges_gpkg),
+        ("depth-raster", depth_raster),
+        ("cat-raster", cat_raster),
+    ]:
+        if not p.exists():
+            typer.echo(f"ERROR: {label} not found: {p}", err=True)
+            raise typer.Exit(code=1)
+
+    from floodroute.hazard.phase_b import run_phase_b  # noqa: PLC0415
+
+    try:
+        result = run_phase_b(
+            graph_path,
+            edges_gpkg,
+            depth_raster,
+            cat_raster,
+            dem_path=_dem,
+            waterway_path=_ww,
+            output_dir=output_dir,
+            force=force,
+        )
+    except FileExistsError as exc:
+        typer.echo(f"ERROR: {exc}. Use --force to overwrite.", err=True)
         raise typer.Exit(code=1) from exc
     except ValueError as exc:
         typer.echo(f"ERROR: {exc}", err=True)
@@ -1903,39 +1909,39 @@ def validate_hazard(
 
     import geopandas as gpd  # noqa: PLC0415
 
+    gdf = gpd.read_file(enriched_gpkg, layer="edges")
+    n = len(gdf)
+    failures: list[str] = []
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+    # Required Phase B columns
+    jrc_cols = [
+        f"jrc_{rp}_{attr}"
+        for rp in ("rp10", "rp20", "rp100")
+        for attr in (
+            "status",
+            "depth_max_m",
+            "depth_wt_mean_m",
+            "exposed_m",
+            "exposed_pct",
+            "perm_water_m",
+            "spurious",
+            "sample_n",
+        )
+    ]
+    terrain_cols = [
+        "terrain_elev_min_m",
+        "terrain_elev_mean_m",
+        "terrain_elev_max_m",
+        "terrain_elev_change_m",
+        "terrain_slope_pct",
+    ]
+    waterway_cols = [
+        "waterway_nearest_dist_m",
+        "waterway_crossing",
+        "waterway_nearest_name",
+        "waterway_nearest_type",
+    ]
+    network_cols = ["network_wcc_id"]
 
     required = jrc_cols + terrain_cols + waterway_cols + network_cols
     missing = [c for c in required if c not in gdf.columns]
