@@ -2045,10 +2045,10 @@ class TestPerFacilityReachability:
         (58,   "Atabay ES node 58"),
     ])
     @pytest.mark.parametrize("rp", ["RP10", "RP20", "RP100"])
-    def test_reachable_origin_count(self, graph_and_origins, fac_node, fac_label, rp):
+    def test_reachable_origin_count(self, graph_and_origins_module, fac_node, fac_label, rp):
         """Each facility individually serves 25 of 28 origins for every RP."""
         import networkx as nx
-        G, origins = graph_and_origins
+        G, origins = graph_and_origins_module
         G_rev = G.reverse(copy=False)
         reachable = set(nx.single_source_shortest_path_length(G_rev, fac_node).keys())
         count = sum(1 for o in origins if o.origin_node in reachable)
@@ -2061,10 +2061,10 @@ class TestPerFacilityReachability:
         (58,   "Atabay ES node 58"),
     ])
     @pytest.mark.parametrize("rp", ["RP10", "RP20", "RP100"])
-    def test_reachable_population(self, graph_and_origins, fac_node, fac_label, rp):
+    def test_reachable_population(self, graph_and_origins_module, fac_node, fac_label, rp):
         """Each facility individually serves 57,812 of 65,140 people for every RP."""
         import networkx as nx
-        G, origins = graph_and_origins
+        G, origins = graph_and_origins_module
         G_rev = G.reverse(copy=False)
         reachable = set(nx.single_source_shortest_path_length(G_rev, fac_node).keys())
         pop = sum(o.population_2020 for o in origins if o.origin_node in reachable)
@@ -2072,10 +2072,10 @@ class TestPerFacilityReachability:
             f"{fac_label} {rp}: expected 57812 reachable population, got {pop}"
         )
 
-    def test_unreachable_barangays_identical_for_both_facilities(self, graph_and_origins):
+    def test_unreachable_barangays_identical_for_both_facilities(self, graph_and_origins_module):
         """Both facilities have the same three unreachable barangays."""
         import networkx as nx
-        G, origins = graph_and_origins
+        G, origins = graph_and_origins_module
         G_rev = G.reverse(copy=False)
         reach_1345 = set(nx.single_source_shortest_path_length(G_rev, 1345).keys())
         reach_58   = set(nx.single_source_shortest_path_length(G_rev, 58).keys())
@@ -2084,10 +2084,10 @@ class TestPerFacilityReachability:
         assert unreachable_1345 == unreachable_58
         assert unreachable_1345 == {"Barangay 8 (Pob.)", "Durog", "Malaiba"}
 
-    def test_union_reachability_same_as_individual(self, graph_and_origins):
+    def test_union_reachability_same_as_individual(self, graph_and_origins_module):
         """Union of both facilities adds no additional coverage over either alone."""
         import networkx as nx
-        G, origins = graph_and_origins
+        G, origins = graph_and_origins_module
         G_rev = G.reverse(copy=False)
         reach_1345 = set(nx.single_source_shortest_path_length(G_rev, 1345).keys())
         reach_58   = set(nx.single_source_shortest_path_length(G_rev, 58).keys())
@@ -2097,9 +2097,9 @@ class TestPerFacilityReachability:
         assert union_count == 25
         assert union_pop == 57_812
 
-    def test_adjacent_edges_are_modelled_dry_all_rps(self, graph_and_origins):
+    def test_adjacent_edges_are_modelled_dry_all_rps(self, graph_and_origins_module):
         """All edges adjacent to both facility nodes are modelled_dry in every RP."""
-        G, _ = graph_and_origins
+        G, _ = graph_and_origins_module
         for fac_node in (1345, 58):
             for u, v, data in G.edges(data=True):
                 if u == fac_node or v == fac_node:

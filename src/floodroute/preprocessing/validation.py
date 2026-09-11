@@ -36,6 +36,7 @@ def validate_vector_output(
     pcode_field: str,
     min_features: int = 1,
     check_containment_bounds: tuple[float, float, float, float] | None = None,
+    check_duplicate_ids: bool = False,
 ) -> dict[str, Any]:
     """Validate a vector GeoPackage output.
 
@@ -94,6 +95,14 @@ def validate_vector_output(
             issues.append(f"Missing codes in {pcode_field}: {sorted(missing)}")
     else:
         issues.append(f"Field '{pcode_field}' not in output columns")
+
+    # Duplicate ID check
+    if check_duplicate_ids and pcode_field in gdf.columns:
+        dupes = gdf[pcode_field][gdf[pcode_field].duplicated()]
+        if not dupes.empty:
+            issues.append(
+                f"Duplicate values in {pcode_field}: {sorted(set(dupes.tolist()))}"
+            )
 
     # Spatial containment
     if check_containment_bounds is not None:
@@ -227,3 +236,91 @@ def validate_raster_output(
     }
     logger.info("Raster validation OK: %s (%dx%d px)", path, width, height)
     return result
+
+
+# ---------------------------------------------------------------------------
+# OSM output validation
+# ---------------------------------------------------------------------------
+
+
+def validate_osm_output(
+    path: Path,
+    *,
+    layer: str,
+    expected_crs: str,
+    municipality_buffer: Any,
+    feature_type: str,
+    min_features: int = 1,
+    expected_osm_id_set: set[int] | None = None,
+) -> dict[str, Any]:
+    """Validate a GeoPackage output from OSM feature extraction.
+
+    Checks:
+    - File exists and is readable with geopandas
+    - CRS matches *expected_crs*
+    - Feature count meets *min_features*
+    - ``osm_id`` column is sorted ascending (if present)
+    - If *expected_osm_id_set* provided, the file's osm_ids must match exactly
+
+    Returns a dict with ``valid``, ``feature_count``.
+    Raises ValidationFailed on any check failure.
+    """
+    import geopandas as gpd
+    from pyproj import CRS
+
+    if not path.exists():
+        raise ValidationFailed(f"OSM output file not found: {path}")
+
+    try:
+        gdf = gpd.read_file(path, layer=layer)
+    except Exception as exc:
+        raise ValidationFailed(f"Cannot read OSM output {path} (layer={layer}): {exc}") from exc
+
+    # CRS check
+    expected = CRS.from_user_input(expected_crs)
+    actual = CRS.from_user_input(gdf.crs) if gdf.crs is not None else None
+    if actual is None or not actual.equals(expected):
+        raise ValidationFailed(
+            f"CRS mismatch for {path}: expected {expected_crs}, "
+            f"got {gdf.crs!r}"
+        )
+
+    feature_count = len(gdf)
+
+    if feature_count < min_features:
+        raise ValidationFailed(
+            f"OSM output {path} has {feature_count} features, "
+            f"minimum required is {min_features}"
+        )
+
+    # osm_id sort check
+    if "osm_id" in gdf.columns and feature_count > 1:
+        ids = gdf["osm_id"].tolist()
+        if ids != sorted(ids):
+            raise ValidationFailed(
+                f"osm_id column is not sorted ascending in {path}"
+            )
+
+    # Identity check
+    if expected_osm_id_set is not None and "osm_id" in gdf.columns:
+        actual_ids = set(gdf["osm_id"].tolist())
+        if actual_ids != expected_osm_id_set:
+            missing = expected_osm_id_set - actual_ids
+            extra = actual_ids - expected_osm_id_set
+            raise ValidationFailed(
+                f"osm_id mismatch in {path}: "
+                f"missing={sorted(missing)}, extra={sorted(extra)}"
+            )
+
+    logger.info(
+        "OSM output validation OK: %s (layer=%s, %d %s features)",
+        path, layer, feature_count, feature_type,
+    )
+    return {
+        "path": str(path),
+        "layer": layer,
+        "feature_type": feature_type,
+        "crs": expected_crs,
+        "feature_count": feature_count,
+        "valid": True,
+    }

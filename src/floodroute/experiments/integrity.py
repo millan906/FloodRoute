@@ -58,4 +58,28 @@ def validate_experiment(
 
     # Checks 2-5: per-scenario validation
     for sr in results:
-        pass  # NOTE: rest of file not captured
+        alg = sr.key.algorithm
+
+        # Check 3: shelter capacity violations for algorithms that enforce capacity
+        if alg in ("C", "B+"):
+            for node, fm in (sr.facility_metrics or {}).items():
+                load = fm.get("load", 0)
+                cap = fm.get("capacity", 0)
+                if load > cap:
+                    violations.append(
+                        f"Scenario {sr.key}: shelter {node} load={load} exceeds "
+                        f"capacity={cap} (alg {alg} must not overflow)"
+                    )
+
+        # Check 6: assignment rate consistency
+        m = sr.metrics or {}
+        total_demand = m.get("total_demand", 0)
+        assigned = m.get("assigned_population", 0)
+        unassigned = m.get("unassigned_population", 0)
+        if total_demand > 0 and assigned + unassigned != total_demand:
+            violations.append(
+                f"Scenario {sr.key}: assigned ({assigned}) + unassigned ({unassigned}) "
+                f"!= total_demand ({total_demand})"
+            )
+
+    return violations

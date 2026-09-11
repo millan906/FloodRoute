@@ -23,7 +23,6 @@ class CatalogEntry:
     longitude: float | None
     osm_element_type: str | None   # "way" | "node" | "relation" | None
     osm_id_raw: str | None         # e.g. "1394870512"
-    osm_url: str | None            # e.g. "https://www.openstreetmap.org/way/1394870512"
     designation_status: str        # "government_confirmed_from_published_sources" |
     #                                "lgu_verified" | "historically_activated" |
     #                                "candidate_only"
@@ -34,6 +33,7 @@ class CatalogEntry:
     snapping_distance_m: float | None
     source: str                    # "facility_registry" | "osm_candidate"
     barangay_name: str
+    osm_url: str | None = None     # e.g. "https://www.openstreetmap.org/way/1394870512"
     inside_study_boundary: bool | None = None
     notes: str = ""
 

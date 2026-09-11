@@ -65,10 +65,12 @@ _D_PW = 3   # permanent_water_class
 _D_SD = 4   # spurious_depth_category
 
 # Band indices in category raster (0-based)
+# 5-band format: RP10_cat, RP20_cat, RP100_cat, perm_water, spurious
 _C_RP10 = 0
-_C_RP100 = 1
-_C_PW = 2
-_C_SD = 3
+_C_RP20 = 1
+_C_RP100 = 2
+_C_PW = 3
+_C_SD = 4
 
 # DEM sampling density (points along edge)
 _DEM_SAMPLE_PTS: int = 20
@@ -89,6 +91,7 @@ class PixelHit:
     depth_rp20: float
     depth_rp100: float
     cat_rp10: float           # depth_category value: NODATA_SENTINEL | _DRY_VAL | flood_val
+    cat_rp20: float
     cat_rp100: float
     perm_water: float         # 1.0 = permanent water; -1.0 = not permanent
     spurious: float           # spurious_depth_category value; -1 = not flagged
@@ -147,6 +150,8 @@ class PhaseBResult:
     output_gpkg: Path
     sha256_graphml: str
     sha256_gpkg: str
+    total_exposed_dir_m_rp10: float = 0.0   # sum over directed edges
+    total_exposed_phys_m_rp10: float = 0.0  # sum over physical segments (deduped)
     warnings: list[str] = field(default_factory=list)
 
 
@@ -224,14 +229,20 @@ def _pixel_hits(
             sd = float(depth_arr[_D_SD, row, col])
 
             # Category raster may use a different transform / size
-            c10 = NODATA_SENTINEL
-            c100 = NODATA_SENTINEL
+            _NOT_FLOODED_CAT = -1.0
+            c10 = _NOT_FLOODED_CAT
+            c20 = _NOT_FLOODED_CAT
+            c100 = _NOT_FLOODED_CAT
             if cat_arr is not None and cat_transform is not None:
                 cat_H, cat_W = cat_arr.shape[1], cat_arr.shape[2]
                 cr, cc = rasterio.transform.rowcol(cat_transform, px_x, px_y)
                 if 0 <= cr < cat_H and 0 <= cc < cat_W:
                     c10 = float(cat_arr[_C_RP10, cr, cc])
-                    c100 = float(cat_arr[_C_RP100, cr, cc])
+                    # RP20 band only present in 5-band format; fall back gracefully
+                    if cat_arr.shape[0] > _C_RP20:
+                        c20 = float(cat_arr[_C_RP20, cr, cc])
+                    if cat_arr.shape[0] > _C_RP100:
+                        c100 = float(cat_arr[_C_RP100, cr, cc])
 
             hits.append(
                 PixelHit(
@@ -240,6 +251,7 @@ def _pixel_hits(
                     depth_rp20=d20,
                     depth_rp100=d100,
                     cat_rp10=c10,
+                    cat_rp20=c20,
                     cat_rp100=c100,
                     perm_water=pw,
                     spurious=sd,
@@ -291,18 +303,17 @@ def _jrc_rp_attr(
             depth = h.depth_rp10
             cat = h.cat_rp10
             is_flooded = float(cat) in _FLOOD_VALS
-            is_outside = float(cat) == NODATA_SENTINEL
+            is_outside = float(depth) == NODATA_SENTINEL or float(cat) == NODATA_SENTINEL
         elif rp == "RP20":
             depth = h.depth_rp20
-            # Infer domain from RP10 category
-            is_outside = float(h.cat_rp10) == NODATA_SENTINEL
-            is_flooded = (not is_outside) and (depth != NODATA_SENTINEL) and (depth > 0)
-            cat = h.cat_rp10  # domain indicator only
+            cat = h.cat_rp20  # use actual RP20 category band
+            is_flooded = float(cat) in _FLOOD_VALS
+            is_outside = float(depth) == NODATA_SENTINEL or float(cat) == NODATA_SENTINEL
         else:  # RP100
             depth = h.depth_rp100
             cat = h.cat_rp100
             is_flooded = float(cat) in _FLOOD_VALS
-            is_outside = float(cat) == NODATA_SENTINEL
+            is_outside = float(depth) == NODATA_SENTINEL or float(cat) == NODATA_SENTINEL
 
         is_dry = (not is_flooded) and (not is_outside)
 
@@ -732,11 +743,20 @@ def run_phase_b(
         1 for a in phase_b_attrs.values() if a.get("waterway_crossing", 0)
     )
 
-    # Physical segment count (deduplicate bidirectional pairs)
+    # Physical segment count and physical exposure (deduplicate bidirectional pairs)
     phys_keys: set[tuple[Any, Any]] = set()
-    for erow_idx, erow in edges_utm.iterrows():
-        phys_keys.add((erow.get("osm_id"), erow.get("edge_seq")))
+    phys_rp10: dict[tuple[Any, Any], float] = {}
+    for _erow_idx, erow in edges_utm.iterrows():
+        pk = (erow.get("osm_id"), erow.get("edge_seq"))
+        phys_keys.add(pk)
+        u2 = int(erow["u_node"])
+        v2 = int(erow["v_node"])
+        k2 = int(erow["edge_key"])
+        exp = phase_b_attrs.get((u2, v2, k2), {}).get("jrc_rp10_exposed_m", 0.0)
+        if exp > phys_rp10.get(pk, 0.0):
+            phys_rp10[pk] = exp
     n_physical = len(phys_keys)
+    total_phys_m_rp10 = sum(phys_rp10.values())
 
     result = PhaseBResult(
         municipality_code=municipality_pcode,
@@ -748,6 +768,8 @@ def run_phase_b(
         total_exposed_m_rp10=round(total_m_rp10, 2),
         total_exposed_m_rp20=round(total_m_rp20, 2),
         total_exposed_m_rp100=round(total_m_rp100, 2),
+        total_exposed_dir_m_rp10=round(total_m_rp10, 2),
+        total_exposed_phys_m_rp10=round(total_phys_m_rp10, 2),
         n_waterway_crossings=n_crossings,
         output_graphml=out_graphml,
         output_gpkg=out_gpkg,

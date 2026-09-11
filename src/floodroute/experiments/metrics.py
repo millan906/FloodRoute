@@ -303,6 +303,19 @@ def compute_metrics(
 
     dry_route_distance_m = physical_route_distance_m - flooded_route_distance_m
 
+    # Per-shelter load keys for stage8 backward compatibility
+    per_shelter_load = {f"shelter_{s}_load": load for s, load in shelter_loads.items()}
+    per_shelter_capacity = {
+        f"shelter_{s}_capacity": result.capacities.get(s, 0)
+        for s in shelter_loads
+    }
+
+    run_id = (
+        f"{result.algorithm}_{result.return_period}_{result.demand_fraction:.2f}"
+        if result.algorithm and result.return_period
+        else ""
+    )
+
     return {
         "total_demand": total_demand,
         "total_assigned": total_assigned,
@@ -312,8 +325,11 @@ def compute_metrics(
         "assignment_rate": assignment_rate,
         "shelter_loads": shelter_loads,
         "capacity_violations": capacity_violations,
+        "num_capacity_violations": len(capacity_violations),
         "total_overflow_units": total_overflow,
         "unreachable_origins": unreachable_origins,
+        "num_unreachable_origins": len(unreachable_origins),
+        "unreachable_origin_nodes": ", ".join(str(n) for n in sorted(unreachable_origins)),
         "unassigned_by_reason": unassigned_by_reason,
         "total_route_cost_m_eq": total_cost,
         "max_route_cost_m_eq": max_cost,
@@ -329,4 +345,7 @@ def compute_metrics(
         "algorithm": result.algorithm,
         "return_period": result.return_period,
         "demand_fraction": result.demand_fraction,
+        "run_id": run_id,
+        **per_shelter_load,
+        **per_shelter_capacity,
     }

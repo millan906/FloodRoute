@@ -77,6 +77,7 @@ def build_preprocessing_manifest(
     raster_dtype: str | None = None,
     geometry_repairs: int = 0,
     extra: dict[str, Any] | None = None,
+    validation_status: str | None = None,
 ) -> dict[str, Any]:
     """Build a preprocessing manifest dict for one output file.
 
@@ -148,6 +149,8 @@ def build_preprocessing_manifest(
         out["dtype"] = raster_dtype
     if extra:
         manifest["extra"] = extra
+    if validation_status is not None:
+        manifest["validation_status"] = validation_status
 
     return manifest
 

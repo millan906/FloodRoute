@@ -247,7 +247,8 @@ FACILITY_REGISTRY: list[FacilityRecord] = [
         designation_source=(
             "OCD-6 / DPWH Region VI — official P36M facility turnover to the "
             "Municipality of San Jose de Buenavista, 2019-03-21 "
-            "(PNA article pna.gov.ph/articles/1065266)"
+            "(PNA article pna.gov.ph/articles/1065266); "
+            "secondary source: lorenlegarda.com.ph"
         ),
         operational_status="unknown",
         verification_status="unverified",

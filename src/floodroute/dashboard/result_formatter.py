@@ -206,6 +206,63 @@ def format_recommendation(algorithm: str, metrics: dict) -> str:
     )
 
 
+PLANNER_ROUTING_METHOD: str = (
+    "Routing method: Algorithm C — Capacity-aware global allocation "
+    "via Minimum-Cost Flow (MCF). Assigns demand to shelters optimally "
+    "subject to capacity constraints. Planning scenario only."
+)
+
+
+def summarise_unassigned(
+    total_unassigned: int,
+    reachable_origins: set,
+    demands: dict,
+) -> str:
+    """Return a human-readable summary of why demand was unassigned.
+
+    Parameters
+    ----------
+    total_unassigned:
+        Total unassigned demand units.
+    reachable_origins:
+        Set of origin nodes that have at least one reachable facility.
+    demands:
+        ``{origin_node: demand_units}`` for all demand-carrying origins.
+
+    Returns
+    -------
+    str
+        Empty string when ``total_unassigned == 0``.
+    """
+    if total_unassigned == 0:
+        return ""
+
+    unreachable_demand = sum(
+        d for o, d in demands.items() if o not in reachable_origins
+    )
+    capacity_demand = total_unassigned - unreachable_demand
+
+    if capacity_demand <= 0:
+        # All unassigned are unreachable
+        return (
+            f"{total_unassigned:,} people unassigned because no selected facility "
+            "is reachable under the current flood and road conditions."
+        )
+
+    if unreachable_demand <= 0:
+        # All unassigned are capacity-constrained
+        return (
+            f"{total_unassigned:,} people unassigned due to shelter capacity constraints."
+        )
+
+    # Mixed causes
+    return (
+        f"{total_unassigned:,} people unassigned: {unreachable_demand:,} because no "
+        "selected facility is reachable under the current flood and road conditions; "
+        f"{capacity_demand:,} due to shelter capacity constraints."
+    )
+
+
 def format_run_label(algorithm: str, return_period: str, demand_fraction: float) -> str:
     """Return a compact run label, e.g. ``'C / RP20 / 25%'``."""
     return f"{algorithm} / {return_period} / {demand_fraction:.0%}"
@@ -254,18 +311,34 @@ def format_origin_assignment_status(origin_node: int, result) -> dict:
 
     # Determine why not assigned: unreachable or capacity-exhausted
     reachable = any(o == origin_node for (o, _s) in result.od_costs_scenario)
+
+    # Shelters that are enabled (in capacities) but not reachable from this origin
+    all_shelters = set(getattr(result, "capacities", {}).keys())
+    reachable_shelters = {s for (o, s) in result.od_costs_scenario if o == origin_node}
+    unreachable_enabled = all_shelters - reachable_shelters
+
     if not reachable:
         return {
             "status": "unreachable",
             "shelter": None,
             "units": 0,
-            "reason": "No path to any shelter under the routing model",
+            "reason": "No route to any shelter under the routing model",
+            "unreachable_enabled": unreachable_enabled,
         }
+
+    n_unreachable = len(unreachable_enabled)
+    reason = "Shelter capacity exhausted — demand not assigned by Algorithm C"
+    if n_unreachable > 0:
+        reason += (
+            f"; {n_unreachable} enabled facilit{'y' if n_unreachable == 1 else 'ies'} "
+            "not reachable under routing model"
+        )
     return {
         "status": "unassigned",
         "shelter": None,
         "units": 0,
-        "reason": "Shelter capacity exhausted — demand not assigned by Algorithm C",
+        "reason": reason,
+        "unreachable_enabled": unreachable_enabled,
     }
 
 

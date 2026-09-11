@@ -99,6 +99,7 @@ def scenario_to_dict(
         "capacity_multipliers": list(scenario.capacity_multipliers),
         "flood_penalties": [str(p) for p in scenario.flood_penalties],
         "catalog_fingerprint": catalog_fingerprint,
+        "road_conditions": list(getattr(scenario, "road_conditions", [])),
     }
 
 
@@ -132,6 +133,7 @@ def scenario_from_dict(data: dict, catalog: object = None) -> tuple:
         ),
         flood_penalties=tuple(penalties),
         catalog_fingerprint=data.get("catalog_fingerprint", ""),
+        road_conditions=list(data.get("road_conditions", [])),
     )
     unresolved: list[str] = []
     if catalog is not None:

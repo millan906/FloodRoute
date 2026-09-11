@@ -34,6 +34,9 @@ class ScenarioConfig:
     # Catalog fingerprint (SHA-256 of sorted facility IDs+types)
     catalog_fingerprint: str = ""
 
+    # Road condition overrides (list of dicts, each with road_name, condition, segment_count)
+    road_conditions: list = field(default_factory=list)
+
     def selected_with_capacity(self) -> dict[str, int]:
         """Return {facility_id: capacity} for selected facilities with positive capacity."""
         return {

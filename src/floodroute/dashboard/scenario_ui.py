@@ -128,8 +128,8 @@ def _capacity_label(entry: CatalogEntry) -> str:  # noqa: ARG001
 def render_facility_selection(
     catalog: FacilityCatalog,
     scenario: ScenarioConfig,
-    origin_nodes: set[int],
-    last_reachable_nodes: set[int] | None,
+    origin_nodes: set[int] | None,
+    last_reachable_nodes: set[int] | None = None,
 ) -> tuple[ScenarioConfig, bool, str]:
     """Render facility selection UI.
 
@@ -307,6 +307,7 @@ def render_facility_selection(
                     # Reachability / origin-collision notice
                     if (
                         entry.snapped_node is not None
+                        and origin_nodes is not None
                         and entry.snapped_node in origin_nodes
                     ):
                         st.caption(

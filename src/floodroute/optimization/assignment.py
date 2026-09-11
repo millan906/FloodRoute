@@ -169,11 +169,11 @@ def solve_assignment(
         If the flow network is infeasible (should not occur with the DUMMY
         fallback path, but raised if the network is otherwise malformed).
     """
-    shared = set(demands) & set(capacities)
-    if shared:
-        raise ValueError(
-            f"Nodes appear in both demands and capacities: {sorted(str(n) for n in shared)}"
-        )
+    # Namespace logical nodes so a physical node may serve as both origin and
+    # shelter (co-located case).  ("origin", n) and ("shelter", n) are distinct
+    # flow-network vertices even when n is identical.
+    _O = "origin"
+    _S = "shelter"
 
     total_demand = sum(demands.values())
 
@@ -204,6 +204,8 @@ def solve_assignment(
     # Build the min-cost flow auxiliary network.
     # Edge insertion order is deterministic (sorted keys) so that identical
     # inputs produce identical DiGraph structures and solver outputs.
+    # Nodes are namespaced as ("origin", id) and ("shelter", id) to allow
+    # a physical road-network node to appear in both roles (co-located case).
     FG: nx.DiGraph = nx.DiGraph()
     FG.add_node(_SOURCE, demand=-total_demand)
     FG.add_node(_SINK, demand=total_demand)
@@ -211,18 +213,22 @@ def solve_assignment(
 
     for o in sorted(demands, key=str):
         d_val = demands[o]
-        FG.add_node(o, demand=0)
-        FG.add_edge(_SOURCE, o, capacity=d_val, weight=0)
+        o_node = (_O, o)
+        FG.add_node(o_node, demand=0)
+        FG.add_edge(_SOURCE, o_node, capacity=d_val, weight=0)
         # Fallback path for demand that cannot reach any shelter.
-        FG.add_edge(o, _DUMMY, capacity=d_val, weight=dummy_penalty)
+        FG.add_edge(o_node, _DUMMY, capacity=d_val, weight=dummy_penalty)
+
+    for s in sorted(capacities, key=str):
+        s_node = (_S, s)
+        FG.add_node(s_node, demand=0)
+        FG.add_edge(s_node, _SINK, capacity=capacities[s], weight=0)
 
     for (o, s), int_cost in sorted(int_od.items(), key=str):
         if o in demands and s in capacities:
-            FG.add_edge(o, s, capacity=demands[o], weight=int_cost)
-
-    for s in sorted(capacities, key=str):
-        FG.add_node(s, demand=0)
-        FG.add_edge(s, _SINK, capacity=capacities[s], weight=0)
+            o_node = (_O, o)
+            s_node = (_S, s)
+            FG.add_edge(o_node, s_node, capacity=demands[o], weight=int_cost)
 
     FG.add_edge(_DUMMY, _SINK, capacity=total_demand, weight=0)
 
@@ -231,14 +237,16 @@ def solve_assignment(
     # Extract real assignments (ignore DUMMY flows).
     assignments: dict[tuple, int] = {}
     for o in demands:
+        o_node = (_O, o)
         for s in capacities:
-            f = flow_dict.get(o, {}).get(s, 0)
+            s_node = (_S, s)
+            f = flow_dict.get(o_node, {}).get(s_node, 0)
             if f > 0:
                 assignments[(o, s)] = int(round(f))
 
     # Unassigned = flow that reached DUMMY.
     total_unassigned = int(
-        round(sum(flow_dict.get(o, {}).get(_DUMMY, 0) for o in demands))
+        round(sum(flow_dict.get((_O, o), {}).get(_DUMMY, 0) for o in demands))
     )
     total_assigned = total_demand - total_unassigned
 

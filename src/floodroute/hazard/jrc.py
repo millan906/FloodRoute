@@ -491,13 +491,13 @@ def _is_tunnel(val: Any) -> bool:
 
 
 def _depth_class(depth_m: float) -> str:
-    if depth_m >= DEPTH_CLASS_HIGH_MIN_M:
+    if depth_m > DEPTH_CLASS_HIGH_MIN_M:
         return "high"
     if depth_m >= DEPTH_CLASS_MEDIUM_MIN_M:
         return "medium"
     if depth_m >= DEPTH_CLASS_LOW_MIN_M:
         return "low"
-    return "none"
+    return "no_modeled_inundation"
 
 
 def compute_road_exposure(

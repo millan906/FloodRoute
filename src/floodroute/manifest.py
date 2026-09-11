@@ -40,6 +40,7 @@ class AccessMethod(StrEnum):
     formal_request = "formal_request"
     local_authority = "local_authority"
     derived_later = "derived_later"
+    researcher_assembled = "researcher_assembled"
 
 
 class DatasetCategory(StrEnum):

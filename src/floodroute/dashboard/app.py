@@ -1126,6 +1126,12 @@ with planner_tab:
             st.rerun()
 
     # ── CENTER COLUMN: Map ────────────────────────────────────────────────
+    # _result_is_stale: True when a result exists but the scenario has changed
+    _result_is_stale: bool = (
+        st.session_state.get("run_scenario_key") is not None
+        and st.session_state.get("sc_dirty", False)
+    )
+
     with col_map:
         result = st.session_state["result"]
         metrics = st.session_state["metrics"]
@@ -1547,7 +1553,7 @@ Demand is distributed proportionally using the **largest-remainder method** (Ham
         _run_frac = st.selectbox(
             "Demand fraction",
             options=[0.10, 0.25, 0.50],
-            value=0.25,
+            index=1,
             format_func=lambda f: f"{f:.0%}",
             key="tech_frac",
         )
