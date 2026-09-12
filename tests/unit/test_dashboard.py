@@ -666,6 +666,125 @@ class TestMapBuildSmoke:
 
 
 # ---------------------------------------------------------------------------
+# _origin_tooltip_html — pure helper
+# ---------------------------------------------------------------------------
+
+
+class TestOriginTooltipHtml:
+    """Unit tests for _origin_tooltip_html — pure, no Folium or graph deps."""
+
+    from floodroute.dashboard.map_builder import _origin_tooltip_html  # noqa: E402
+
+    _NODE_INFO = {
+        10: {"name": "Maybato Sur", "population_2020": 2308},
+        20: {"name": "Atabay", "population_2020": 2180},
+    }
+    _LABELS = {33: "Salazar Elementary", 58: "Covered Court"}
+
+    def _html(self, **kw):
+        from floodroute.dashboard.map_builder import _origin_tooltip_html
+        defaults = dict(
+            node=10,
+            demand=577,
+            assigned=577,
+            node_info=self._NODE_INFO,
+            demand_fraction=0.25,
+            assignments={(10, 33): 577},
+            shelter_labels=self._LABELS,
+            is_selected=False,
+        )
+        defaults.update(kw)
+        return _origin_tooltip_html(**defaults)
+
+    def test_header_shows_barangay_name_not_node_id_first(self):
+        html = self._html()
+        # Barangay name must appear before the raw node id
+        assert "Maybato Sur" in html
+        idx_name = html.index("Maybato Sur")
+        idx_node = html.index("node 10")
+        assert idx_name < idx_node, "Barangay name must precede the node id"
+
+    def test_header_contains_pickup_point_label(self):
+        assert "Barangay pickup point" in self._html()
+
+    def test_psa_population_shown(self):
+        assert "2,308" in self._html()
+
+    def test_fraction_demand_shows_percentage_and_hamilton(self):
+        html = self._html(demand_fraction=0.25, demand=577)
+        assert "25%" in html
+        assert "Hamilton apportionment" in html
+        assert "577" in html
+
+    def test_exact_demand_shows_exact_label_not_hamilton(self):
+        html = self._html(demand_fraction=None, demand=500)
+        assert "exact" in html.lower()
+        assert "Hamilton" not in html
+
+    def test_assigned_and_unassigned_totals(self):
+        html = self._html(demand=577, assigned=400)
+        assert "Assigned: 400" in html
+        assert "Unassigned: 177" in html
+
+    def test_fully_assigned_shows_zero_unassigned(self):
+        html = self._html(demand=577, assigned=577)
+        assert "Unassigned: 0" in html
+
+    def test_single_facility_name_and_count(self):
+        html = self._html(assignments={(10, 33): 577})
+        assert "Salazar Elementary" in html
+        assert "577" in html
+
+    def test_two_facility_split(self):
+        """Demand split between two facilities — both names and counts appear."""
+        html = self._html(
+            demand=577,
+            assigned=577,
+            assignments={(10, 33): 377, (10, 58): 200},
+        )
+        assert "Salazar Elementary" in html
+        assert "377" in html
+        assert "Covered Court" in html
+        assert "200" in html
+        assert "Assigned facilities:" in html
+
+    def test_unassigned_origin_shows_no_facility_message(self):
+        html = self._html(
+            demand=436,
+            assigned=0,
+            assignments={},
+        )
+        assert "No facility assignment" in html
+        assert "Unassigned: 436" in html
+
+    def test_selected_marker_includes_star(self):
+        html = self._html(is_selected=True)
+        # ★ encoded as &#9733; or the literal character
+        assert "&#9733;" in html or "★" in html
+
+    def test_node_id_present_as_technical_detail(self):
+        html = self._html(node=10)
+        assert "node 10" in html
+
+    def test_missing_node_info_falls_back_gracefully(self):
+        html = self._html(node=99, node_info={})
+        assert "Pickup point 99" in html
+
+    def test_capacity_not_mentioned(self):
+        """Capacity is a shelter property; the origin popup must not show it."""
+        html = self._html()
+        assert "capacity" not in html.lower()
+
+    def test_other_origin_assignments_excluded(self):
+        """Assignments from a different origin must not appear in this tooltip."""
+        html = self._html(
+            node=10,
+            assignments={(10, 33): 377, (20, 33): 999},  # node 20 is a different origin
+        )
+        assert "999" not in html
+
+
+# ---------------------------------------------------------------------------
 # SHELTER_DISPLAY_LABELS constant
 # ---------------------------------------------------------------------------
 
