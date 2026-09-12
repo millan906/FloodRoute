@@ -25,6 +25,7 @@ from floodroute.dashboard.result_formatter import (
     format_run_label,
     format_shelter_loads,
     summarise_unassigned,
+    unassigned_rows,
     validate_inputs,
 )
 
@@ -1292,3 +1293,157 @@ class TestFacilityRouteColor:
         # Must not raise and last node must reuse a palette color
         last_color = facility_route_color(nodes[-1], nodes)
         assert last_color in FACILITY_ROUTE_PALETTE
+
+
+# ---------------------------------------------------------------------------
+# unassigned_rows — per-origin unassigned breakdown
+# ---------------------------------------------------------------------------
+
+
+class _UnassignedFakeResult:
+    """Minimal RunResult-shaped stub for unassigned_rows tests."""
+
+    def __init__(
+        self,
+        demands: dict,
+        assignments: dict,
+        od_costs_scenario: dict,
+    ) -> None:
+        self.demands = demands
+        self.assignments = assignments
+        self.od_costs_scenario = od_costs_scenario
+
+
+_NODE_INFO_STUB = {
+    1: {"name": "Barangay Alpha", "population_2020": 1000},
+    2: {"name": "Barangay Beta",  "population_2020": 800},
+    3: {"name": "Barangay Gamma", "population_2020": 600},
+}
+
+
+class TestUnassignedRows:
+    """Tests for unassigned_rows()."""
+
+    def test_multiple_unassigned_barangays_all_returned(self):
+        """All origins with unassigned demand must appear in the result."""
+        result = _UnassignedFakeResult(
+            demands={1: 200, 2: 150, 3: 100},
+            assignments={},
+            od_costs_scenario={},  # no reachability → all "no modeled route"
+        )
+        rows = unassigned_rows(result, _NODE_INFO_STUB)
+        nodes = {r["node"] for r in rows}
+        assert {1, 2, 3} == nodes, "All three unassigned origins must be listed"
+
+    def test_multiple_unassigned_sorted_by_unassigned_descending(self):
+        """Rows must be ordered largest unassigned first."""
+        result = _UnassignedFakeResult(
+            demands={1: 200, 2: 150, 3: 100},
+            assignments={},
+            od_costs_scenario={},
+        )
+        rows = unassigned_rows(result, _NODE_INFO_STUB)
+        unassigned_vals = [r["unassigned"] for r in rows]
+        assert unassigned_vals == sorted(unassigned_vals, reverse=True)
+
+    def test_partial_assignment_capacity_reason(self):
+        """Origin that received some units but not all → 'insufficient reachable capacity'."""
+        result = _UnassignedFakeResult(
+            demands={1: 500},
+            assignments={(1, 10): 200},  # 300 unassigned
+            od_costs_scenario={(1, 10): 1000.0},  # origin 1 is reachable
+        )
+        rows = unassigned_rows(result, _NODE_INFO_STUB)
+        assert len(rows) == 1
+        r = rows[0]
+        assert r["assigned"] == 200
+        assert r["unassigned"] == 300
+        assert r["reason"] == "insufficient reachable capacity"
+
+    def test_fully_unassigned_reachable_origin_capacity_reason(self):
+        """Reachable but fully unassigned origin → 'insufficient reachable capacity'."""
+        result = _UnassignedFakeResult(
+            demands={2: 150},
+            assignments={},
+            od_costs_scenario={(2, 10): 500.0},  # reachable but no units assigned
+        )
+        rows = unassigned_rows(result, _NODE_INFO_STUB)
+        assert len(rows) == 1
+        assert rows[0]["reason"] == "insufficient reachable capacity"
+
+    def test_fully_unassigned_unreachable_origin_no_route_reason(self):
+        """Origin with no entry in od_costs_scenario → 'no modeled route'."""
+        result = _UnassignedFakeResult(
+            demands={3: 100},
+            assignments={},
+            od_costs_scenario={},  # no path at all
+        )
+        rows = unassigned_rows(result, _NODE_INFO_STUB)
+        assert len(rows) == 1
+        assert rows[0]["reason"] == "no modeled route"
+
+    def test_zero_unassigned_scenario_returns_empty(self):
+        """When all demand is satisfied, unassigned_rows must return an empty list."""
+        result = _UnassignedFakeResult(
+            demands={1: 200, 2: 150},
+            assignments={(1, 10): 200, (2, 10): 150},
+            od_costs_scenario={(1, 10): 400.0, (2, 10): 500.0},
+        )
+        rows = unassigned_rows(result, _NODE_INFO_STUB)
+        assert rows == [], "No rows must be returned when all demand is assigned"
+
+    def test_row_totals_equal_overall_unassigned(self):
+        """Sum of row['unassigned'] must equal total_demand - total_assigned."""
+        result = _UnassignedFakeResult(
+            demands={1: 400, 2: 300, 3: 200},
+            assignments={(1, 10): 250, (2, 10): 100},  # 3 fully unassigned
+            od_costs_scenario={(1, 10): 1000.0, (2, 10): 1200.0},
+        )
+        total_demand = sum(result.demands.values())           # 900
+        total_assigned = sum(result.assignments.values())     # 350
+        expected_unassigned = total_demand - total_assigned   # 550
+
+        rows = unassigned_rows(result, _NODE_INFO_STUB)
+        row_sum = sum(r["unassigned"] for r in rows)
+        assert row_sum == expected_unassigned, (
+            f"Row total {row_sum} must equal overall unassigned {expected_unassigned}"
+        )
+
+    def test_fully_assigned_origins_excluded(self):
+        """Origins with zero unassigned demand must not appear in rows."""
+        result = _UnassignedFakeResult(
+            demands={1: 200, 2: 150},
+            assignments={(1, 10): 200, (2, 10): 50},  # origin 1 fully assigned
+            od_costs_scenario={(1, 10): 400.0, (2, 10): 500.0},
+        )
+        rows = unassigned_rows(result, _NODE_INFO_STUB)
+        nodes = {r["node"] for r in rows}
+        assert 1 not in nodes, "Fully assigned origin 1 must not appear"
+        assert 2 in nodes, "Partially unassigned origin 2 must appear"
+
+    def test_name_fallback_when_node_not_in_node_info(self):
+        """Origins absent from node_info get a 'Pickup point {node}' fallback name."""
+        result = _UnassignedFakeResult(
+            demands={99: 100},
+            assignments={},
+            od_costs_scenario={},
+        )
+        rows = unassigned_rows(result, _NODE_INFO_STUB)
+        assert len(rows) == 1
+        assert rows[0]["name"] == "Pickup point 99"
+
+    def test_none_result_returns_empty(self):
+        """Passing result=None must return an empty list without raising."""
+        assert unassigned_rows(None, _NODE_INFO_STUB) == []
+
+    def test_mixed_reasons_in_same_run(self):
+        """A run may have both 'no modeled route' and 'insufficient reachable capacity'."""
+        result = _UnassignedFakeResult(
+            demands={1: 400, 2: 300},
+            assignments={(1, 10): 100},     # origin 1 partially assigned
+            od_costs_scenario={(1, 10): 1000.0},  # origin 2 unreachable
+        )
+        rows = unassigned_rows(result, _NODE_INFO_STUB)
+        reasons = {r["node"]: r["reason"] for r in rows}
+        assert reasons[1] == "insufficient reachable capacity"
+        assert reasons[2] == "no modeled route"

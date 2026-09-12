@@ -29,6 +29,7 @@ from floodroute.dashboard.past_experiments import discover_experiments, verify_c
 from floodroute.dashboard.result_formatter import (
     format_origin_assignment_status,
     summarise_unassigned,
+    unassigned_rows,
 )
 from floodroute.dashboard.road_overrides import (
     RoadOverride,
@@ -535,8 +536,14 @@ with planner_tab:
                 st.session_state["sc_dirty"] = False
                 st.success("Saved as new.")
 
-            # Load scenario
+            # Load / delete scenario
             _saved = list_scenarios()
+
+            # Flash message stored by a previous deletion (survives the rerun)
+            _sc_del_flash = st.session_state.pop("_sc_del_flash", None)
+            if _sc_del_flash:
+                st.success(f"Deleted '{_sc_del_flash}'.")
+
             if _saved:
                 _names = {
                     s["scenario_id"]: s.get("scenario_name", s["scenario_id"])
@@ -596,33 +603,43 @@ with planner_tab:
                     except Exception as _e:
                         st.error(f"Failed to load: {_e}")
 
-            # Delete with confirmation
-            _del_id = st.session_state.get("sc_confirm_delete")
-            if _del_id and _saved:
-                _names_del = {
-                    s["scenario_id"]: s.get("scenario_name", s["scenario_id"])
-                    for s in _saved
-                }
-                st.warning(f"Delete '{_names_del.get(_del_id, _del_id)}'?")
-                _dy, _dn = st.columns(2)
-                if _dy.button(  # noqa: E501
-                    "Delete", type="primary", use_container_width=True, key="sc_del_confirm"
-                ):
-                    delete_scenario(_del_id)
-                    if st.session_state.get("sc_id") == _del_id:
-                        st.session_state["sc_id"] = None
-                        st.session_state["sc_dirty"] = False
-                    st.session_state["sc_confirm_delete"] = None
-                    st.rerun()
-                if _dn.button("Cancel", use_container_width=True, key="sc_del_cancel"):
-                    st.session_state["sc_confirm_delete"] = None
-                    st.rerun()
-            elif _saved and st.button(
-                "Delete current saved scenario",
-                use_container_width=True,
-                key="sc_del_btn",
-            ):
-                st.session_state["sc_confirm_delete"] = st.session_state.get("sc_id")
+                # ── Delete selected scenario ──────────────────────────────
+                # Button only appears when a scenario is selected in the
+                # dropdown.  The target is always _sel_id, not sc_id, so
+                # deleting scenario B while scenario A is loaded works
+                # correctly.
+                _del_id = st.session_state.get("sc_confirm_delete")
+                if _sel_id and _del_id == _sel_id:
+                    # Confirmation step
+                    st.warning(f"Delete '{_names.get(_del_id, _del_id)}'?")
+                    _dy, _dn = st.columns(2)
+                    if _dy.button(
+                        "Delete", type="primary", use_container_width=True,
+                        key="sc_del_confirm",
+                    ):
+                        try:
+                            delete_scenario(_del_id)
+                            _del_name = _names.get(_del_id, _del_id)
+                            if st.session_state.get("sc_id") == _del_id:
+                                st.session_state["sc_id"] = None
+                                st.session_state["sc_dirty"] = False
+                            st.session_state["sc_confirm_delete"] = None
+                            # Store name for flash message shown after rerun
+                            st.session_state["_sc_del_flash"] = _del_name
+                        except Exception as _e:
+                            st.error(f"Delete failed: {_e}")
+                            st.session_state["sc_confirm_delete"] = None
+                        st.rerun()
+                    if _dn.button("Cancel", use_container_width=True, key="sc_del_cancel"):
+                        st.session_state["sc_confirm_delete"] = None
+                        st.rerun()
+                elif _sel_id:
+                    if st.button(
+                        "Delete saved scenario",
+                        use_container_width=True,
+                        key="sc_del_btn",
+                    ):
+                        st.session_state["sc_confirm_delete"] = _sel_id
 
         st.divider()
 
@@ -1304,9 +1321,44 @@ with planner_tab:
                     f"**{_tu:,} without an assignment** ({_tu / max(_td, 1):.0%}) — "
                     f"{_panel_reason}"
                 )
+                # ── Unassigned origins breakdown ──────────────────────────
+                _u_rows = unassigned_rows(result, _NODE_INFO)
+                if _u_rows:
+                    with st.expander(
+                        f"Unassigned by barangay pickup point ({len(_u_rows)})",
+                        expanded=True,
+                    ):
+                        for _ur in _u_rows:
+                            _ur_col, _ur_btn_col = st.columns([5, 1])
+                            with _ur_col:
+                                st.markdown(
+                                    f"**{_ur['name']}** — "
+                                    f"demand {_ur['demand']:,} · "
+                                    f"assigned {_ur['assigned']:,} · "
+                                    f"unassigned {_ur['unassigned']:,} · "
+                                    f"*{_ur['reason']}*"
+                                )
+                            with _ur_btn_col:
+                                _ur_is_hl = (
+                                    _ur["node"]
+                                    == st.session_state.get("selected_origin_node")
+                                )
+                                if st.button(
+                                    "★" if _ur_is_hl else "⬤",
+                                    key=f"unassigned_hl_{_ur['node']}",
+                                    help=(
+                                        "Remove highlight"
+                                        if _ur_is_hl
+                                        else "Highlight on map"
+                                    ),
+                                ):
+                                    st.session_state["selected_origin_node"] = (
+                                        None if _ur_is_hl else _ur["node"]
+                                    )
+                                    st.rerun()
 
             # ── Per-barangay breakdown ────────────────────────────────────
-            st.markdown("**By barangay pickup point**")
+            st.markdown("**All barangay pickup points**")
             _bgy_rows: list[dict] = []
             for _o, _od in sorted(result.demands.items(), key=lambda x: -x[1]):
                 if _od <= 0:

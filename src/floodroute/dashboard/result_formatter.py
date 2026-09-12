@@ -266,6 +266,76 @@ def summarise_unassigned(
     )
 
 
+def unassigned_rows(result, node_info: dict) -> list[dict]:
+    """Return per-origin rows for origins with unassigned demand.
+
+    Only origins with ``unassigned > 0`` are included.  The sum of
+    ``unassigned`` across all returned rows equals the total unassigned
+    demand for the run.
+
+    Parameters
+    ----------
+    result:
+        ``RunResult`` from one of the algorithm functions, or ``None``.
+    node_info:
+        ``{origin_node: {"name": str, "population_2020": int}}``
+        as built from the ``BarangayOrigin`` objects in the dashboard.
+
+    Returns
+    -------
+    list[dict]
+        Sorted by ``unassigned`` descending.  Each entry contains:
+
+        ``node``      : int   — graph node ID
+        ``name``      : str   — barangay name (fallback: "Pickup point {node}")
+        ``demand``    : int   — total scenario demand for this origin
+        ``assigned``  : int   — units successfully assigned
+        ``unassigned``: int   — units not assigned (always > 0)
+        ``reason``    : str   — ``"no modeled route"`` when the origin has
+                                no path to any facility under the routing
+                                model; ``"insufficient reachable capacity"``
+                                when the origin is reachable but shelter
+                                capacity was exhausted.
+    """
+    if result is None:
+        return []
+
+    reachable: set = {o for (o, _s) in result.od_costs_scenario}
+    rows: list[dict] = []
+
+    for node, demand in result.demands.items():
+        if demand <= 0:
+            continue
+        assigned = sum(
+            u for (o, _s), u in result.assignments.items() if o == node and u > 0
+        )
+        unassigned = demand - assigned
+        if unassigned <= 0:
+            continue
+
+        info = (node_info or {}).get(node, {})
+        name = (info.get("name") if isinstance(info, dict) else None) or f"Pickup point {node}"
+
+        # A partial assignment means the origin is reachable; all remaining
+        # unassigned demand is due to capacity.  A fully-unassigned origin
+        # is unreachable when it has no entry in od_costs_scenario at all.
+        if assigned > 0 or node in reachable:
+            reason = "insufficient reachable capacity"
+        else:
+            reason = "no modeled route"
+
+        rows.append({
+            "node": node,
+            "name": name,
+            "demand": demand,
+            "assigned": assigned,
+            "unassigned": unassigned,
+            "reason": reason,
+        })
+
+    return sorted(rows, key=lambda r: -r["unassigned"])
+
+
 def format_run_label(algorithm: str, return_period: str, demand_fraction: float) -> str:
     """Return a compact run label, e.g. ``'C / RP20 / 25%'``."""
     return f"{algorithm} / {return_period} / {demand_fraction:.0%}"
