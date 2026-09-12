@@ -22,6 +22,7 @@ from floodroute.dashboard.result_formatter import (
     format_recommendation,
     format_run_label,
     format_shelter_loads,
+    summarise_unassigned,
     validate_inputs,
 )
 
@@ -640,6 +641,29 @@ class TestMapBuildSmoke:
             mb._ENRICHED_GPKG = orig
             mb._EDGES_GDF = None
 
+    def test_shelter_labels_param_overrides_hardcoded_labels(self):
+        """Regression: shelter_labels kwarg must appear in marker tooltips, not the
+        hardcoded fallback 'Scenario Shelter (node X)'."""
+        from floodroute.dashboard.map_builder import build_analytical_map
+
+        custom_labels = {
+            33: "SJDB Municipal Evacuation Center",
+            58: "SJDB Covered Court",
+        }
+        fmap = build_analytical_map(
+            self.G, "RP10", self.caps,
+            result=self.result,
+            metrics=self.metrics,
+            shelter_labels=custom_labels,
+        )
+        html = fmap._repr_html_()
+        assert "SJDB Municipal Evacuation Center" in html, (
+            "shelter_labels value for node 33 must appear in map HTML"
+        )
+        assert "SJDB Covered Court" in html, (
+            "shelter_labels value for node 58 must appear in map HTML"
+        )
+
 
 # ---------------------------------------------------------------------------
 # SHELTER_DISPLAY_LABELS constant
@@ -907,3 +931,185 @@ class TestPathLengthM:
         G.add_edge(1, 2, length_m=80.0, jrc_rp20_status="modelled_dry")
         total_m, _ = _path_length_m(G, [1, 2])
         assert total_m == pytest.approx(80.0)
+
+# ---------------------------------------------------------------------------
+# Regression: generate-plan button path must load G before run_floodroute_assignment
+# ---------------------------------------------------------------------------
+
+
+class TestGeneratePlanPath:
+    """Regression guard for NameError: name 'G' is not defined.
+
+    Before the fix the run-plan body executed unconditionally on every
+    render — not inside a button handler — and called
+    run_floodroute_assignment(G, ...) without G ever being loaded in
+    that scope.  An HTTP 200 check cannot catch this because the error
+    only fires when the user clicks the button (i.e. after initial load).
+    These tests directly exercise the code path that was broken.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _require_data(self):
+        from pathlib import Path
+
+        from floodroute.experiments.runner import _DEFAULT_GRAPHML
+
+        if not Path(_DEFAULT_GRAPHML).exists():
+            pytest.skip("Graph data not present")
+
+    def test_load_graph_returns_non_empty_multidigraph(self):
+        """_load_graph() must return a MultiDiGraph with nodes and edges."""
+        import networkx as nx
+
+        from floodroute.dashboard.app import _load_graph
+
+        G = _load_graph()
+        assert isinstance(G, nx.MultiDiGraph)
+        assert G.number_of_nodes() > 0
+        assert G.number_of_edges() > 0
+
+    def test_generate_plan_path_does_not_raise_name_error(self):
+        """Calling run_floodroute_assignment with _load_graph() output must succeed.
+
+        This mirrors the corrected button-handler body:
+            G = _load_graph()
+            result = run_floodroute_assignment(G, demands, shelters, rp)
+        The test would have caught the NameError that existed before the fix
+        because G was not assigned before that call in the module body.
+        """
+        from floodroute.dashboard.app import _load_catalog, _load_graph, _load_origins
+        from floodroute.experiments.algorithms import run_floodroute_assignment
+        from floodroute.experiments.demand import build_demands
+        from floodroute.scenario.config import ScenarioConfig
+
+        # Exact sequence executed inside the fixed button handler
+        G = _load_graph()
+        origins, total_pop = _load_origins()
+        demands, _ = build_demands(origins, 0.25)
+        catalog = _load_catalog()
+        scenario = ScenarioConfig(
+            municipality="PH0600608",
+            return_period="RP10",
+            demand_mode="fraction",
+            demand_fraction=0.25,
+            selected_facility_ids=[
+                e.facility_id for e in catalog.all() if e.can_be_selected
+            ],
+            facility_capacities={
+                e.facility_id: 500 for e in catalog.all() if e.can_be_selected
+            },
+        )
+        origin_nodes = {o.origin_node for o in origins}
+        effective_shelters = catalog.resolve_node_shelters(
+            scenario, exclude_nodes=origin_nodes
+        )
+
+        result = run_floodroute_assignment(G, demands, effective_shelters, "RP10")
+
+        assert result is not None
+        assert hasattr(result, "assignments")
+        assert hasattr(result, "routes")
+        assert sum(result.demands.values()) > 0
+
+    def test_generate_plan_metrics_complete(self):
+        """compute_metrics must return a complete dict after plan generation."""
+        from floodroute.dashboard.app import _load_catalog, _load_graph, _load_origins
+        from floodroute.experiments.algorithms import run_floodroute_assignment
+        from floodroute.experiments.demand import build_demands
+        from floodroute.experiments.metrics import compute_metrics
+        from floodroute.scenario.config import ScenarioConfig
+
+        G = _load_graph()
+        origins, total_pop = _load_origins()
+        demands, _ = build_demands(origins, 0.25)
+        catalog = _load_catalog()
+        scenario = ScenarioConfig(
+            municipality="PH0600608",
+            return_period="RP10",
+            demand_mode="fraction",
+            demand_fraction=0.25,
+            selected_facility_ids=[
+                e.facility_id for e in catalog.all() if e.can_be_selected
+            ],
+            facility_capacities={
+                e.facility_id: 500 for e in catalog.all() if e.can_be_selected
+            },
+        )
+        origin_nodes = {o.origin_node for o in origins}
+        effective_shelters = catalog.resolve_node_shelters(
+            scenario, exclude_nodes=origin_nodes
+        )
+        result = run_floodroute_assignment(G, demands, effective_shelters, "RP10")
+        metrics = compute_metrics(result, G, total_population=total_pop)
+
+        assert metrics["total_demand"] > 0
+        assert 0.0 <= metrics["assignment_rate"] <= 1.0
+        assert "total_assigned" in metrics
+        assert "total_unassigned" in metrics
+
+
+# ---------------------------------------------------------------------------
+# summarise_unassigned — display reason correctness
+# ---------------------------------------------------------------------------
+
+
+class TestSummariseUnassigned:
+    """Verify that summarise_unassigned reports the correct cause and never
+    blames capacity when all unassigned demand comes from unreachable origins."""
+
+    _DEMANDS = {1: 1284, 2: 436, 3: 500}
+    # Origins 1 and 2 are unreachable; 3 is reachable and fully assigned.
+    _REACHABLE_ALL_ASSIGNED = {3}
+
+    def test_zero_unassigned_returns_empty_string(self):
+        assert summarise_unassigned(0, {1, 2, 3}, self._DEMANDS) == ""
+
+    def test_all_unreachable_mentions_no_modeled_route_and_osm(self):
+        """When every unassigned unit comes from unreachable origins, the message
+        must use 'no modeled route', reference the OSM-derived network, and must
+        not mention 'capacity'."""
+        msg = summarise_unassigned(1720, self._REACHABLE_ALL_ASSIGNED, self._DEMANDS)
+        assert "no modeled route" in msg, f"Expected 'no modeled route' in: {msg!r}"
+        assert "OSM-derived" in msg, f"Expected 'OSM-derived' in: {msg!r}"
+        assert "capacity" not in msg.lower(), (
+            f"Must not mention capacity when cause is unreachability: {msg!r}"
+        )
+
+    def test_all_unreachable_count_matches(self):
+        """The message must include the exact unassigned count."""
+        msg = summarise_unassigned(1720, self._REACHABLE_ALL_ASSIGNED, self._DEMANDS)
+        assert "1,720" in msg, f"Expected '1,720' in: {msg!r}"
+
+    def test_all_capacity_mentions_capacity_not_pickup(self):
+        """When every unassigned unit comes from a reachable origin, the message
+        must mention 'capacity' and must not mention 'pickup points'."""
+        # All origins reachable, but 500 unassigned → capacity-constrained
+        msg = summarise_unassigned(500, {1, 2, 3}, self._DEMANDS)
+        assert "capacity" in msg.lower(), f"Expected 'capacity' in: {msg!r}"
+        assert "pickup points" not in msg, (
+            f"Must not mention pickup points for capacity-only cause: {msg!r}"
+        )
+
+    def test_mixed_cause_mentions_both(self):
+        """Mixed scenario: some unreachable, some capacity-constrained."""
+        # Origins 1 (1284) unreachable, origin 3 (500) partially unassigned (300)
+        # unreachable_demand = 1284; capacity_demand = 300; total = 1584
+        demands = {1: 1284, 2: 436, 3: 500}
+        reachable = {2, 3}  # origin 1 unreachable
+        msg = summarise_unassigned(1584, reachable, demands)
+        assert "pickup points" in msg, f"Expected 'pickup points' in: {msg!r}"
+        assert "capacity" in msg.lower(), f"Expected 'capacity' in: {msg!r}"
+        assert "1,284" in msg, f"Expected unreachable count '1,284' in: {msg!r}"
+        assert "300" in msg, f"Expected capacity count '300' in: {msg!r}"
+
+    def test_banner_and_panel_produce_same_reason(self):
+        """Coverage banner and result panel both call summarise_unassigned with
+        the same arguments — they must return identical strings."""
+        total_unassigned = 1720
+        reachable = self._REACHABLE_ALL_ASSIGNED
+        demands = self._DEMANDS
+        banner_reason = summarise_unassigned(total_unassigned, reachable, demands)
+        panel_reason = summarise_unassigned(total_unassigned, reachable, demands)
+        assert banner_reason == panel_reason, (
+            "Coverage banner and result panel must display the same reason"
+        )

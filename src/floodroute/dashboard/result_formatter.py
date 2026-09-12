@@ -242,12 +242,15 @@ def summarise_unassigned(
     )
     capacity_demand = total_unassigned - unreachable_demand
 
+    _osm_note = (
+        "no modeled route to any selected facility from their pickup points "
+        "(OSM-derived road network and snapped coordinates only; "
+        "unmapped or disconnected roads are not included)"
+    )
+
     if capacity_demand <= 0:
         # All unassigned are unreachable
-        return (
-            f"{total_unassigned:,} people unassigned because no selected facility "
-            "is reachable under the current flood and road conditions."
-        )
+        return f"{total_unassigned:,} people unassigned — {_osm_note}."
 
     if unreachable_demand <= 0:
         # All unassigned are capacity-constrained
@@ -257,8 +260,8 @@ def summarise_unassigned(
 
     # Mixed causes
     return (
-        f"{total_unassigned:,} people unassigned: {unreachable_demand:,} because no "
-        "selected facility is reachable under the current flood and road conditions; "
+        f"{total_unassigned:,} people unassigned: "
+        f"{unreachable_demand:,} with {_osm_note}; "
         f"{capacity_demand:,} due to shelter capacity constraints."
     )
 

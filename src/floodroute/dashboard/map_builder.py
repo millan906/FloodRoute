@@ -285,6 +285,86 @@ _SHELTER_LABELS: dict[int, str] = {
 }
 
 
+def _origin_tooltip_html(
+    *,
+    node: int,
+    demand: int,
+    assigned: int,
+    node_info: object,
+    demand_fraction: float | None,
+    assignments: dict,
+    shelter_labels: object,
+    is_selected: bool = False,
+) -> str:
+    """Build the HTML tooltip string for a barangay origin marker.
+
+    Pure function — no side effects, no Folium or graph dependencies.
+
+    Parameters
+    ----------
+    node:
+        Graph node ID of the origin.
+    demand:
+        Integer scenario demand (Hamilton-apportioned when fraction-based).
+    assigned:
+        Total units assigned to any facility.
+    node_info:
+        Dict mapping node IDs to ``{"name": str, "population_2020": int}``.
+    demand_fraction:
+        Fraction used for demand calculation (e.g. 0.25), or ``None`` /
+        ``0.0`` when an exact demand count was specified instead.
+    assignments:
+        ``{(origin_node, shelter_node): units}`` from the algorithm result.
+    shelter_labels:
+        ``{shelter_node: display_name}`` for facility labels.
+    is_selected:
+        Whether this origin is currently highlighted on the map.
+    """
+    info = node_info.get(node, {}) if isinstance(node_info, dict) else {}
+    name = info.get("name") or f"Pickup point {node}"
+    pop: int | None = info.get("population_2020")
+    unassigned = demand - assigned
+
+    lines: list[str] = []
+
+    header = f"<b>{name}</b> — Barangay pickup point"
+    if is_selected:
+        header += " &#9733;"
+    lines.append(header)
+
+    if pop is not None:
+        lines.append(f"PSA 2020 population: {pop:,}")
+
+    if demand_fraction:
+        pct = f"{demand_fraction:.0%}"
+        lines.append(
+            f"Scenario demand ({pct}, Hamilton apportionment): {demand:,}"
+        )
+    else:
+        lines.append(f"Scenario demand (exact): {demand:,}")
+
+    lines.append(f"Assigned: {assigned:,}")
+    lines.append(f"Unassigned: {unassigned:,}")
+
+    _slabels: dict = shelter_labels if isinstance(shelter_labels, dict) else {}
+    fac_loads: dict[int, int] = {}
+    for (o, s), u in assignments.items():
+        if o == node and u > 0:
+            fac_loads[s] = fac_loads.get(s, 0) + u
+
+    if fac_loads:
+        lines.append("Assigned facilities:")
+        for s, u in sorted(fac_loads.items(), key=lambda x: -x[1]):
+            fname = _slabels.get(s) or f"Facility {s}"
+            lines.append(f"&nbsp;&nbsp;{fname}: {u:,}")
+    else:
+        lines.append("No facility assignment in this scenario")
+
+    lines.append(f"<small style='color:#9CA3AF'>node {node}</small>")
+
+    return "<br>".join(lines)
+
+
 def _build_legend_html(algorithm: str = "C") -> str:
     """Return inline HTML for the compact permanent map legend.
 
@@ -642,9 +722,18 @@ def build_analytical_map(
                 fill=True,
                 fill_color=color,
                 fill_opacity=0.9 if is_selected else 0.7,
-                tooltip=(
-                    f"Node {o} — demand {demand:,}, assigned {assigned:,}"
-                    + (" ★ selected" if is_selected else "")
+                tooltip=folium.Tooltip(
+                    _origin_tooltip_html(
+                        node=o,
+                        demand=demand,
+                        assigned=assigned,
+                        node_info=node_info,
+                        demand_fraction=demand_fraction,
+                        assignments=result.assignments,
+                        shelter_labels=shelter_labels,
+                        is_selected=is_selected,
+                    ),
+                    parse_html=True,
                 ),
             ).add_to(origin_group)
 
@@ -659,20 +748,33 @@ def build_analytical_map(
             fill=True,
             fill_color="#F59E0B",
             fill_opacity=0.9,
-            tooltip=f"Selected origin: node {selected_origin_node}",
+            tooltip=folium.Tooltip(
+                _origin_tooltip_html(
+                    node=selected_origin_node,
+                    demand=0,
+                    assigned=0,
+                    node_info=node_info,
+                    demand_fraction=demand_fraction,
+                    assignments={},
+                    shelter_labels=shelter_labels,
+                    is_selected=True,
+                ),
+                parse_html=True,
+            ),
         ).add_to(origin_group)
 
     origin_group.add_to(m)
 
     # ── Scenario shelters ─────────────────────────────────────────────────
     shelter_group = folium.FeatureGroup(name="Scenario shelters", show=True)
+    _effective_labels: dict = shelter_labels if isinstance(shelter_labels, dict) else {}
     for s, cap in sorted(capacities.items()):
         if s not in G.nodes:
             continue
         lat, lon = node_to_latlon(G, s)
         load = int(metrics.get(f"shelter_{s}_load", 0)) if metrics else 0
         remaining = cap - load
-        label = _SHELTER_LABELS.get(s, f"Scenario Shelter (node {s})")
+        label = _effective_labels.get(s) or _SHELTER_LABELS.get(s) or f"Scenario Shelter (node {s})"
         is_alg_c_target = s == alg_c_assigned_shelter
         tooltip_lines = [
             label,

@@ -1223,9 +1223,9 @@ class TestPlannerResultLabels:
             demands={1: 500, 2: 300},
         )
         assert "800" in msg
-        assert "no selected facility" in msg
-        assert "reachable" in msg
-        assert "flood and road conditions" in msg
+        assert "no modeled route" in msg
+        assert "selected facility" in msg
+        assert "OSM-derived" in msg
 
     def test_summarise_unassigned_all_capacity(self):
         """All unassigned from reachable origins → capacity message."""
@@ -1252,7 +1252,7 @@ class TestPlannerResultLabels:
         assert "300" in msg   # unreachable count
         assert "50" in msg    # capacity-constrained count (350 - 300)
         assert "capacity" in msg.lower()
-        assert "reachable" in msg.lower()
+        assert "no modeled route" in msg
 
     def test_summarise_unassigned_exact_phrasing_all_unreachable(self):
         """Exact phrase matches the specified UI copy when all unassigned are unreachable."""
@@ -1263,8 +1263,9 @@ class TestPlannerResultLabels:
             demands={10: 1000, 20: 720},
         )
         expected = (
-            "1,720 people unassigned because no selected facility "
-            "is reachable under the current flood and road conditions."
+            "1,720 people unassigned — no modeled route to any selected facility "
+            "from their pickup points (OSM-derived road network and snapped "
+            "coordinates only; unmapped or disconnected roads are not included)."
         )
         assert msg == expected
 

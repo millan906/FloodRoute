@@ -28,6 +28,7 @@ from floodroute.dashboard.osm_candidates import OSM_CANDIDATES
 from floodroute.dashboard.past_experiments import discover_experiments, verify_checksums
 from floodroute.dashboard.result_formatter import (
     format_origin_assignment_status,
+    summarise_unassigned,
 )
 from floodroute.dashboard.road_overrides import (
     RoadOverride,
@@ -980,72 +981,6 @@ with planner_tab:
                 f"to this evacuation scenario."
             )
 
-        st.divider()
-
-        # ── Generate plan button ──────────────────────────────────────────
-        st.markdown("### Generate evacuation plan")
-
-        _unresolved_fids = st.session_state.get("sc_unresolved_fids", [])
-        _unresolved_blocked = bool(_unresolved_fids)
-        _run_blocked = not _demand_valid or _fac_blocked or _unresolved_blocked
-        _block_reason = _demand_block_reason or _fac_block_reason
-        if _unresolved_blocked and not _block_reason:
-            _block_reason = (
-                "Loaded scenario contains facilities no longer in the catalog: "
-                + ", ".join(_unresolved_fids[:3])
-                + (f" + {len(_unresolved_fids)-3} more" if len(_unresolved_fids) > 3 else "")
-            )
-
-        # Scenario to calculate (pre-run summary)
-        if not _run_blocked:
-            pass
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
         st.divider()
 
@@ -1062,7 +997,6 @@ with planner_tab:
                 + ", ".join(_unresolved_fids[:3])
                 + (f" + {len(_unresolved_fids)-3} more" if len(_unresolved_fids) > 3 else "")
             )
-
         # Scenario to calculate (pre-run summary)
         if not _run_blocked:
             with st.expander("Scenario to calculate", expanded=False):
@@ -1075,7 +1009,27 @@ with planner_tab:
                         _blist += f" … +{len(selected_bgy_names) - 3} more"
                     st.caption(f"**Barangays:** {_blist}")
 
+        # Build demand dict from current UI selections (needed by button handler)
+        if demand_type == "Exact number":
+            demands, _ = build_demands_exact(selected_origins, exact_demand_value or 0)
+        else:
+            demands, _ = build_demands(selected_origins, demand_fraction or 0.25)
+
+        # Build override weight function from current road-condition store
+        _override_store = _get_override_store()
+        _base_flood_wfn = make_weight_fn(return_period=return_period)
+        _override_wfn = _make_override_wfn(_override_store, _base_flood_wfn)
+
+        if _block_reason:
+            st.warning(_block_reason)
+        if st.button(
+            "Generate evacuation plan",
+            type="primary",
+            use_container_width=True,
+            disabled=_run_blocked,
+        ):
             # Always use Algorithm C (FloodRoute MCF) in the Evacuation Planner
+            G = _load_graph()
             result = run_floodroute_assignment(
                 G, demands, effective_shelters, return_period,
                 weight_fn=_override_wfn,
@@ -1105,6 +1059,16 @@ with planner_tab:
                         alg_c_path = result.routes[_best_pair]
                         alg_c_assigned_shelter = _best_pair[1]
 
+            _demand_val_for_key = (
+                exact_demand_value if demand_type == "Exact number" else demand_fraction
+            )
+            _current_key = (
+                return_period,
+                tuple(sorted(selected_bgy_names)),
+                demand_type,
+                _demand_val_for_key,
+                tuple(sorted(effective_shelters.items())),
+            )
             st.session_state.update({
                 "result": result,
                 "metrics": metrics,
@@ -1123,6 +1087,7 @@ with planner_tab:
                 "alg_c_origin_status": alg_c_origin_status,
                 "run_error": None,
             })
+            st.session_state["sc_dirty"] = False
             st.rerun()
 
     # ── CENTER COLUMN: Map ────────────────────────────────────────────────
@@ -1282,9 +1247,16 @@ with planner_tab:
                     "Check that facilities are reachable and road conditions are set correctly."
                 )
             elif _tu > 0:
+                _banner_reachable = (
+                    {o for (o, _s) in result.od_costs_scenario}
+                    if result is not None else set()
+                )
+                _banner_reason = summarise_unassigned(
+                    _tu, _banner_reachable, result.demands if result is not None else {}
+                )
                 st.warning(
                     f"**PARTIAL COVERAGE** — {_ta:,} of {_td:,} people have an assignment. "
-                    f"**{_tu:,} remain without one** (insufficient reachable facility capacity)."
+                    f"{_banner_reason}"
                 )
             else:
                 st.success(
@@ -1325,14 +1297,16 @@ with planner_tab:
             _m1, _m2 = st.columns(2)
             _m1.metric("People to evacuate", f"{_td:,}")
             _m2.metric("With an assignment", f"{_ta:,}")
+            _reachable_set = {o for (o, _s) in result.od_costs_scenario}
             if _tu > 0:
+                _panel_reason = summarise_unassigned(_tu, _reachable_set, result.demands)
                 st.error(
-                    f"**{_tu:,} without an assignment** ({_tu / max(_td, 1):.0%})"
+                    f"**{_tu:,} without an assignment** ({_tu / max(_td, 1):.0%}) — "
+                    f"{_panel_reason}"
                 )
 
             # ── Per-barangay breakdown ────────────────────────────────────
             st.markdown("**By barangay pickup point**")
-            _reachable_set = {o for (o, _s) in result.od_costs_scenario}
             _bgy_rows: list[dict] = []
             for _o, _od in sorted(result.demands.items(), key=lambda x: -x[1]):
                 if _od <= 0:
