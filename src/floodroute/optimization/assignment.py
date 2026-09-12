@@ -199,6 +199,9 @@ def solve_assignment(
     # max_int_cost is the ceiling of the highest real assignment cost in
     # scaled units; DUMMY_PENALTY is strictly greater than any real path cost.
     max_int_cost: int = max(int_od.values()) if int_od else 0
+    # Any solution with one fewer dummy unit has real assignment cost at most
+    # total_demand * max_int_cost; therefore this penalty enforces maximum
+    # assignment before minimising scaled routing cost.
     dummy_penalty: int = total_demand * max_int_cost + 1
 
     # Build the min-cost flow auxiliary network.

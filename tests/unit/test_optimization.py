@@ -453,6 +453,92 @@ class TestSolveAssignment:
         # Objective uses original floats, not mm-scaled integers:
         assert result.objective_cost == pytest.approx(3 * 100.7 + 2 * 200.3)
 
+    # --- Condition 3: capacity reassignment via augmenting path ---
+
+    def test_reassignment_increases_routing_cost_but_reduces_dummy(self):
+        # Origin A can reach shelter X (cheap) and shelter Y (expensive).
+        # Origin B can only reach shelter X.  Shelter X has capacity 2.
+        #
+        # A greedy (non-MCF) approach would assign A→X:2, leaving B with no
+        # capacity and 2 units unassigned.  The MCF solver must instead route
+        # A→Y:2 (the expensive path) to free X for B, even though the
+        # reassignment raises total real routing cost from 2.0 to 202.0.
+        #
+        # The DUMMY penalty ensures this: 2 unassigned units would cost
+        # 2 × (4 × 100_000 + 1) >> 202, so the solver always prefers the
+        # reassignment over leaving B in the dummy pool.
+        costs = {("A", "X"): 1.0, ("A", "Y"): 100.0, ("B", "X"): 1.0}
+        routes = {
+            ("A", "X"): ["A", "X"],
+            ("A", "Y"): ["A", "Y"],
+            ("B", "X"): ["B", "X"],
+        }
+        demands = {"A": 2, "B": 2}
+        capacities = {"X": 2, "Y": 2}
+
+        result = solve_assignment(demands, capacities, costs, routes)
+
+        # All demand must be assigned — the solver rearranges rather than
+        # leaving B unassigned.
+        assert result.total_assigned == 4
+        assert result.total_unassigned == 0
+
+        # The reassignment routes A through the expensive shelter Y and gives
+        # the cheap shelter X entirely to B (which has no other option).
+        assert result.assignments.get(("A", "Y"), 0) == 2
+        assert result.assignments.get(("B", "X"), 0) == 2
+
+        # Total real routing cost is 202.0, which is higher than the 2.0 that
+        # a greedy non-capacity-aware approach would produce — documenting that
+        # the solver correctly prioritises assignment count over routing cost.
+        assert result.objective_cost == pytest.approx(2 * 100.0 + 2 * 1.0)
+        assert result.objective_cost > 2.0  # explicit: reassignment raised cost
+
+    # --- Condition 4: integer-scaling tie ---
+
+    def test_scaling_tie_assigns_all_demand_and_is_deterministic(self):
+        # Two shelters whose float OD costs differ by 0.3 mm — both round to
+        # the same scaled integer (100_000 millimetres).  The solver cannot
+        # distinguish them by cost, so tie-breaking is determined by edge
+        # insertion order (sorted dict keys) rather than float values.
+        #
+        # Guarantees that DO hold within a scaling tie:
+        #   - All demand is assigned (total capacity > total demand).
+        #   - Identical inputs produce identical outputs (determinism).
+        #
+        # Guarantee that does NOT hold:
+        #   - The assignment with lower float objective_cost is not guaranteed
+        #     to be chosen; the float gap (0.0003 m per unit) is below the
+        #     1 mm integer resolution used by network_simplex.
+        cost_a = 100.0001  # int(round(100.0001 * 1000)) = 100000
+        cost_b = 100.0004  # int(round(100.0004 * 1000)) = 100000  ← same scaled int
+        assert int(round(cost_a * 1000)) == int(round(cost_b * 1000)), (
+            "Precondition: both costs must map to the same scaled integer"
+        )
+
+        costs = {(0, "A"): cost_a, (0, "B"): cost_b}
+        routes = {(0, "A"): [0, "A"], (0, "B"): [0, "B"]}
+        demands = {0: 3}
+        capacities = {"A": 2, "B": 2}
+
+        result1 = solve_assignment(demands, capacities, costs, routes)
+        result2 = solve_assignment(demands, capacities, costs, routes)
+
+        # All demand assigned (total cap=4 ≥ demand=3).
+        assert result1.total_assigned == 3
+        assert result1.total_unassigned == 0
+
+        # Deterministic: identical inputs → identical outputs.
+        assert result1.assignments == result2.assignments
+        assert result1.objective_cost == pytest.approx(result2.objective_cost)
+
+        # The assignment must respect shelter capacities.
+        load_a = result1.assignments.get((0, "A"), 0)
+        load_b = result1.assignments.get((0, "B"), 0)
+        assert load_a <= 2
+        assert load_b <= 2
+        assert load_a + load_b == 3
+
 
 # ---------------------------------------------------------------------------
 # TestSolveAssignmentExhaustive — compare against exhaustive enumeration
