@@ -18,6 +18,7 @@ from floodroute.dashboard.map_builder import (
 )
 from floodroute.dashboard.result_formatter import (
     SHELTER_DISPLAY_LABELS,
+    classify_unassigned_cause,
     format_barangay_card,
     format_feasibility_status,
     format_origin_assignment_status,
@@ -1372,7 +1373,7 @@ class TestUnassignedRows:
         assert rows[0]["reason"] == "insufficient reachable capacity"
 
     def test_fully_unassigned_unreachable_origin_no_route_reason(self):
-        """Origin with no entry in od_costs_scenario → 'no modeled route'."""
+        """Origin with no entry in od_costs_scenario → 'No route found in current map data.'"""
         result = _UnassignedFakeResult(
             demands={3: 100},
             assignments={},
@@ -1380,7 +1381,7 @@ class TestUnassignedRows:
         )
         rows = unassigned_rows(result, _NODE_INFO_STUB)
         assert len(rows) == 1
-        assert rows[0]["reason"] == "no modeled route"
+        assert rows[0]["reason"] == "No route found in current map data."
 
     def test_zero_unassigned_scenario_returns_empty(self):
         """When all demand is satisfied, unassigned_rows must return an empty list."""
@@ -1437,7 +1438,7 @@ class TestUnassignedRows:
         assert unassigned_rows(None, _NODE_INFO_STUB) == []
 
     def test_mixed_reasons_in_same_run(self):
-        """A run may have both 'no modeled route' and 'insufficient reachable capacity'."""
+        """A run may have both map-data and capacity reasons for different origins."""
         result = _UnassignedFakeResult(
             demands={1: 400, 2: 300},
             assignments={(1, 10): 100},     # origin 1 partially assigned
@@ -1446,4 +1447,62 @@ class TestUnassignedRows:
         rows = unassigned_rows(result, _NODE_INFO_STUB)
         reasons = {r["node"]: r["reason"] for r in rows}
         assert reasons[1] == "insufficient reachable capacity"
-        assert reasons[2] == "no modeled route"
+        assert reasons[2] == "No route found in current map data."
+
+
+# ---------------------------------------------------------------------------
+# classify_unassigned_cause — warning variant classification
+# ---------------------------------------------------------------------------
+
+
+class TestClassifyUnassignedCause:
+    """Tests for classify_unassigned_cause() warning variant logic."""
+
+    _DEMANDS_AB = {1: 1284, 2: 436}  # total = 1720
+    _DEMANDS_ABC = {1: 1284, 2: 436, 3: 500}  # total = 2220
+
+    def test_topology_only_when_no_origins_reachable(self):
+        """All unreachable → case == 'topology'."""
+        result = classify_unassigned_cause(1720, set(), self._DEMANDS_AB)
+        assert result["case"] == "topology"
+
+    def test_topology_origin_count_correct(self):
+        """topology case reports exact number of unreachable origins."""
+        result = classify_unassigned_cause(1720, set(), self._DEMANDS_AB)
+        assert result["unreachable_origin_count"] == 2
+
+    def test_topology_capacity_demand_is_zero(self):
+        """topology case: no capacity-constrained demand."""
+        result = classify_unassigned_cause(1720, set(), self._DEMANDS_AB)
+        assert result["capacity_demand"] == 0
+
+    def test_capacity_only_when_all_origins_reachable(self):
+        """All reachable but unassigned → case == 'capacity'."""
+        result = classify_unassigned_cause(500, {1, 2}, self._DEMANDS_AB)
+        assert result["case"] == "capacity"
+
+    def test_capacity_only_unreachable_demand_is_zero(self):
+        """capacity case: no unreachable demand."""
+        result = classify_unassigned_cause(500, {1, 2}, self._DEMANDS_AB)
+        assert result["unreachable_demand"] == 0
+        assert result["capacity_demand"] == 500
+
+    def test_mixed_case_when_both_causes_present(self):
+        """One unreachable origin + capacity shortfall → case == 'mixed'."""
+        # origin 1 unreachable (1284 demand), origins 2 and 3 reachable but 300 unassigned
+        result = classify_unassigned_cause(1584, {2, 3}, self._DEMANDS_ABC)
+        assert result["case"] == "mixed"
+        assert result["unreachable_demand"] == 1284
+        assert result["capacity_demand"] == 300
+
+    def test_topology_single_origin(self):
+        """Single unreachable origin with all demand unassigned → topology."""
+        result = classify_unassigned_cause(100, set(), {5: 100})
+        assert result["case"] == "topology"
+        assert result["unreachable_origin_count"] == 1
+
+    def test_capacity_only_origin_count_is_zero(self):
+        """capacity case: no unreachable origins."""
+        result = classify_unassigned_cause(200, {1, 2, 3}, {1: 100, 2: 200, 3: 300})
+        assert result["case"] == "capacity"
+        assert result["unreachable_origin_count"] == 0

@@ -1,14 +1,16 @@
 """Stage 11 evidence bundle: atomic experiment directory with manifest and CSVs.
 
 Saves a completed experiment to ``experiments/<experiment_id>/`` with:
-- ``manifest.json``        — provenance, config, dataset inventory, file hashes
-- ``dataset_inventory.json`` — input dataset paths and SHA-256 checksums
-- ``scenario_results.csv`` — one row per scenario (metrics flattened)
-- ``assignments.csv``      — per-origin-shelter flow records
-- ``route_metrics.csv``    — physical/flooded/penalized distances per pair
-- ``facility_metrics.csv`` — per-shelter load/capacity/utilization/overflow
-- ``unassigned_reasons.csv`` — origin-level unassigned reason decomposition
-- ``checksums.sha256``     — shasum-format checksums for all files
+- ``manifest.json``           — provenance, config, dataset inventory, file hashes
+- ``dataset_inventory.json``  — input dataset paths and SHA-256 checksums
+- ``scenario_results.csv``    — one row per scenario (metrics flattened)
+- ``assignments.csv``         — per-origin-shelter flow records
+- ``route_metrics.csv``       — physical/flooded/penalized distances per pair
+- ``facility_metrics.csv``    — per-shelter load/capacity/utilization/overflow
+- ``unassigned_reasons.csv``  — origin-level unassigned reason decomposition
+- ``barangay_demand.csv``     — Hamilton-apportioned demand per barangay per fraction
+- ``facility_registry.csv``   — selected facility registry IDs, names and capacities
+- ``checksums.sha256``        — shasum-format checksums for all files
 
 Write is atomic: files are written to a temp directory
 ``experiments/<id>_tmp_<pid>`` and then renamed to ``experiments/<id>``.
@@ -217,26 +219,157 @@ def _write_facility_metrics_csv(path: Path, results: list) -> None:
                 })
 
 
-def _write_unassigned_reasons_csv(path: Path, results: list) -> None:
+def _write_unassigned_reasons_csv(
+    path: Path,
+    results: list,
+    origins: list | None = None,
+) -> None:
+    """Write one row per origin with any unassigned demand (full or partial).
+
+    Columns
+    -------
+    algorithm, return_period, demand_fraction, capacity_multiplier, flood_penalty,
+    origin_node, adm4_pcode, barangay_name,
+    scenario_demand, assigned_count, unassigned_count, reason, osm_network_note.
+
+    Reconciliation guarantee
+    ------------------------
+    For each ScenarioResult, sum(unassigned_count) == sr.metrics["total_unassigned"]
+    (where total_unassigned = total_demand - assigned_population).
+    """
     fieldnames = [
-        "algorithm", "rp", "frac", "mult", "penalty",
-        "origin_node", "reason",
+        "algorithm", "return_period", "demand_fraction", "capacity_multiplier", "flood_penalty",
+        "origin_node", "adm4_pcode", "barangay_name",
+        "scenario_demand", "assigned_count", "unassigned_count", "reason", "osm_network_note",
     ]
+
+    # Build origin_node → (psgc, name) lookup
+    node_psgc: dict[int, str] = {}
+    node_name: dict[int, str] = {}
+    if origins:
+        for o in origins:
+            node_psgc[getattr(o, "origin_node", None)] = getattr(o, "psgc", "")
+            node_name[getattr(o, "origin_node", None)] = getattr(o, "name", "")
+
     with path.open("w", newline="", encoding="utf-8") as fh:
         writer = csv.DictWriter(fh, fieldnames=fieldnames, lineterminator="\n")
         writer.writeheader()
         for sr in results:
             k = sr.key
-            for o, reason in sorted(sr.unassigned_reasons.items(), key=str):
+            demands = getattr(sr, "demands", None) or {}
+            # Compute per-origin assigned counts from assignments
+            assigned_by_origin: dict = {}
+            for (o, _s), flow in (sr.assignments or {}).items():
+                if flow > 0:
+                    assigned_by_origin[o] = assigned_by_origin.get(o, 0) + flow
+
+            for o in sorted(demands, key=str):
+                demand = demands[o]
+                if demand <= 0:
+                    continue
+                assigned = assigned_by_origin.get(o, 0)
+                unassigned = demand - assigned
+                if unassigned <= 0:
+                    continue
+
+                # Classify reason
+                if o in sr.unassigned_reasons:
+                    reason = sr.unassigned_reasons[o]
+                else:
+                    # Partially assigned — capacity was exhausted before full demand met
+                    reason = "capacity_exhausted"
+
+                osm_note = _NETWORK_NOTE if reason == "unreachable" else ""
+
                 writer.writerow({
                     "algorithm": k.algorithm,
-                    "rp": k.return_period,
-                    "frac": k.demand_fraction,
-                    "mult": k.capacity_multiplier,
-                    "penalty": str(k.flood_penalty),
+                    "return_period": k.return_period,
+                    "demand_fraction": k.demand_fraction,
+                    "capacity_multiplier": k.capacity_multiplier,
+                    "flood_penalty": str(k.flood_penalty),
                     "origin_node": o,
+                    "adm4_pcode": node_psgc.get(o, ""),
+                    "barangay_name": node_name.get(o, ""),
+                    "scenario_demand": demand,
+                    "assigned_count": assigned,
+                    "unassigned_count": unassigned,
                     "reason": reason,
+                    "osm_network_note": osm_note,
                 })
+
+
+_NETWORK_NOTE: str = (
+    "The routing network is derived from OpenStreetMap. "
+    "Modeled reachability depends on available road geometry, mapped coordinates "
+    "and graph snapping; absence of a modeled route does not confirm "
+    "real-world inaccessibility."
+)
+
+
+def _write_barangay_demand_csv(path: Path, results: list, origins: list | None) -> None:
+    """Write per-barangay Hamilton-apportioned demand, deduplicated by (fraction, psgc).
+
+    Columns: demand_fraction, adm4_pcode, barangay_name, origin_node, demand_units.
+    ``origins`` is a list of ``BarangayOrigin`` objects used to resolve names and
+    origin nodes from PSGC codes.  When ``origins`` is None, barangay_name and
+    origin_node are recorded as empty strings.
+    """
+    fieldnames = [
+        "demand_fraction", "adm4_pcode", "barangay_name", "origin_node", "demand_units",
+    ]
+    # Build psgc lookup from origins
+    psgc_name: dict[str, str] = {}
+    psgc_node: dict[str, str] = {}
+    if origins:
+        for o in origins:
+            psgc_name[o.psgc] = getattr(o, "name", "")
+            psgc_node[o.psgc] = str(getattr(o, "origin_node", ""))
+
+    seen: set[tuple] = set()
+    rows = []
+    for sr in results:
+        frac = sr.key.demand_fraction
+        for psgc, units in (sr.barangay_demand or {}).items():
+            key = (frac, psgc)
+            if key in seen:
+                continue
+            seen.add(key)
+            rows.append({
+                "demand_fraction": frac,
+                "adm4_pcode": psgc,
+                "barangay_name": psgc_name.get(psgc, ""),
+                "origin_node": psgc_node.get(psgc, ""),
+                "demand_units": units,
+            })
+
+    rows.sort(key=lambda r: (r["demand_fraction"], r["adm4_pcode"]))
+    with path.open("w", newline="", encoding="utf-8") as fh:
+        writer = csv.DictWriter(fh, fieldnames=fieldnames, lineterminator="\n")
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def _write_facility_registry_csv(
+    path: Path,
+    facility_registry_rows: list[dict] | None,
+) -> None:
+    """Write selected facility registry details.
+
+    Each dict in ``facility_registry_rows`` must contain:
+    ``facility_id``, ``name``, ``facility_type``, ``designation_status``,
+    ``snapped_node``, ``snapping_distance_m``, ``configured_capacity``.
+    """
+    fieldnames = [
+        "facility_id", "name", "facility_type", "designation_status",
+        "snapped_node", "snapping_distance_m", "configured_capacity",
+    ]
+    rows = facility_registry_rows or []
+    with path.open("w", newline="", encoding="utf-8") as fh:
+        writer = csv.DictWriter(
+            fh, fieldnames=fieldnames, extrasaction="ignore", lineterminator="\n",
+        )
+        writer.writeheader()
+        writer.writerows(rows)
 
 
 def save_experiment(
@@ -245,6 +378,10 @@ def save_experiment(
     *,
     experiments_root: Path | None = None,
     dataset_paths: dict[str, Path] | None = None,
+    source_scenario_id: str | None = None,
+    road_overrides: dict | None = None,
+    facility_registry_rows: list[dict] | None = None,
+    origins: list | None = None,
 ) -> Path:
     """Atomically save a completed experiment to ``experiments/<experiment_id>/``.
 
@@ -325,7 +462,9 @@ def save_experiment(
         _write_assignments_csv(tmp_dir / "assignments.csv", results)
         _write_route_metrics_csv(tmp_dir / "route_metrics.csv", results)
         _write_facility_metrics_csv(tmp_dir / "facility_metrics.csv", results)
-        _write_unassigned_reasons_csv(tmp_dir / "unassigned_reasons.csv", results)
+        _write_unassigned_reasons_csv(tmp_dir / "unassigned_reasons.csv", results, origins=origins)
+        _write_barangay_demand_csv(tmp_dir / "barangay_demand.csv", results, origins)
+        _write_facility_registry_csv(tmp_dir / "facility_registry.csv", facility_registry_rows)
 
         # Compute file hashes (all outputs except checksums file)
         output_files = [
@@ -335,6 +474,8 @@ def save_experiment(
             "route_metrics.csv",
             "facility_metrics.csv",
             "unassigned_reasons.csv",
+            "barangay_demand.csv",
+            "facility_registry.csv",
         ]
         file_hashes = {fname: _sha256_file(tmp_dir / fname) for fname in output_files}
 
@@ -354,6 +495,12 @@ def save_experiment(
             "flood_penalties": [str(p) for p in config.flood_penalties],
             "nominal_capacities": {str(k): v for k, v in config.nominal_capacities.items()},
             "pilot_mode": config.pilot_mode,
+            "source_scenario_id": source_scenario_id,
+            "road_overrides": (
+                road_overrides if road_overrides is not None
+                else getattr(config, "road_overrides", {})
+            ),
+            "network_note": _NETWORK_NOTE,
             "python_version": pkg_versions["python"],
             "networkx_version": pkg_versions.get("networkx", "unknown"),
             "package_versions": pkg_versions,

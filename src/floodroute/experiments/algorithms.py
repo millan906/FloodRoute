@@ -95,6 +95,17 @@ def _ordinary_weight_fn():
     return _weight
 
 
+def make_ordinary_weight_fn():
+    """Public wrapper — return a plain edge-length Dijkstra weight function.
+
+    Identical to the internal ``_ordinary_weight_fn()`` but exported for use
+    by the experiment runner when building a closures-only override function
+    for Algorithm A.  All edges are traversable regardless of flood status;
+    the weight is the minimum ``length_m`` across parallel edges.
+    """
+    return _ordinary_weight_fn()
+
+
 def _nearest_shelter_assignment(
     demands: dict[int, int],
     capacities: dict[int, int],

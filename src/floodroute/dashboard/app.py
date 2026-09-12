@@ -17,16 +17,12 @@ import streamlit as st
 from streamlit_folium import st_folium
 
 from floodroute.dashboard.experiment_page import render_experiment_page
-from floodroute.dashboard.facilities import (
-    DESIGNATION_TYPE_LABELS,
-    FACILITY_REGISTRY,
-    FACILITY_TYPE_LABELS,
-)
+from floodroute.dashboard.facilities import FACILITY_REGISTRY
 from floodroute.dashboard.map_builder import build_analytical_map
 from floodroute.dashboard.operating_mode import OperatingMode
 from floodroute.dashboard.osm_candidates import OSM_CANDIDATES
-from floodroute.dashboard.past_experiments import discover_experiments, verify_checksums
 from floodroute.dashboard.result_formatter import (
+    classify_unassigned_cause,
     format_origin_assignment_status,
     summarise_unassigned,
     unassigned_rows,
@@ -505,11 +501,38 @@ with planner_tab:
                 st.caption("Unsaved changes")
 
             _c1, _c2 = st.columns(2)
-            if _c1.button("Save", use_container_width=True, key="sc_save_btn"):
-                _sc_obj = ScenarioConfig(
+
+            def _build_sc_for_save() -> ScenarioConfig:
+                """Capture complete active configuration from session/widget state."""
+                _dt = st.session_state.get("demand_type_radio", "25%")
+                if _dt == "10%":
+                    _dm, _df, _de = "fraction", 0.10, 0
+                elif _dt == "25%":
+                    _dm, _df, _de = "fraction", 0.25, 0
+                elif _dt == "50%":
+                    _dm, _df, _de = "fraction", 0.50, 0
+                elif _dt == "Custom %":
+                    _dm = "fraction"
+                    _df = float(st.session_state.get("custom_pct", 25)) / 100.0
+                    _de = 0
+                else:  # "Exact number"
+                    _dm = "exact"
+                    _df = 0.25
+                    _de = int(st.session_state.get("demand_exact_value", 0))
+                return ScenarioConfig(
+                    return_period=st.session_state.get("return_period_radio", "RP100"),
+                    demand_mode=_dm,
+                    demand_fraction=_df,
+                    demand_exact=_de,
                     selected_facility_ids=st.session_state.get("sc_selected_fids", []),
                     facility_capacities=st.session_state.get("sc_facility_caps", {}),
+                    road_overrides=dict(
+                        st.session_state.get("road_override_store_dict") or {}
+                    ),
                 )
+
+            if _c1.button("Save", use_container_width=True, key="sc_save_btn"):
+                _sc_obj = _build_sc_for_save()
                 _cat_fp = _load_catalog().fingerprint()
                 _d = scenario_to_dict(
                     _sc_obj,
@@ -523,10 +546,7 @@ with planner_tab:
                 st.success("Saved.")
 
             if _c2.button("Save as new", use_container_width=True, key="sc_save_new_btn"):
-                _sc_obj = ScenarioConfig(
-                    selected_facility_ids=st.session_state.get("sc_selected_fids", []),
-                    facility_capacities=st.session_state.get("sc_facility_caps", {}),
-                )
+                _sc_obj = _build_sc_for_save()
                 _cat_fp = _load_catalog().fingerprint()
                 _d = scenario_to_dict(
                     _sc_obj, _cat_fp, st.session_state.get("sc_name", "Untitled")
@@ -590,11 +610,37 @@ with planner_tab:
                             st.session_state["sc_unresolved_fids"] = _unresolved
                         else:
                             st.session_state["sc_unresolved_fids"] = []
+                        # Restore every saved control.  Road-override state is
+                        # replaced entirely (not merged) so stale session overrides
+                        # from a prior workflow cannot contaminate the loaded preset.
                         st.session_state["sc_selected_fids"] = list(
                             _sc_loaded.selected_facility_ids
                         )
                         st.session_state["sc_facility_caps"] = dict(
                             _sc_loaded.facility_capacities
+                        )
+                        # Flood scenario
+                        st.session_state["return_period_radio"] = _sc_loaded.return_period
+                        # Demand
+                        _dm = _sc_loaded.demand_mode
+                        if _dm == "exact":
+                            st.session_state["demand_type_radio"] = "Exact number"
+                            st.session_state["demand_exact_value"] = _sc_loaded.demand_exact
+                        else:
+                            _df = _sc_loaded.demand_fraction
+                            if _df == 0.10:
+                                st.session_state["demand_type_radio"] = "10%"
+                            elif _df == 0.25:
+                                st.session_state["demand_type_radio"] = "25%"
+                            elif _df == 0.50:
+                                st.session_state["demand_type_radio"] = "50%"
+                            else:
+                                st.session_state["demand_type_radio"] = "Custom %"
+                                st.session_state["custom_pct"] = int(round(_df * 100))
+                        # Road overrides — replace entirely so prior session state
+                        # does not contaminate the loaded preset.
+                        st.session_state["road_override_store_dict"] = dict(
+                            _sc_loaded.road_overrides
                         )
                         st.session_state["sc_name"] = _loaded.get("scenario_name", "Loaded")
                         st.session_state["sc_id"] = _sel_id
@@ -1316,11 +1362,32 @@ with planner_tab:
             _m2.metric("With an assignment", f"{_ta:,}")
             _reachable_set = {o for (o, _s) in result.od_costs_scenario}
             if _tu > 0:
-                _panel_reason = summarise_unassigned(_tu, _reachable_set, result.demands)
-                st.error(
-                    f"**{_tu:,} without an assignment** ({_tu / max(_td, 1):.0%}) — "
-                    f"{_panel_reason}"
-                )
+                _cause = classify_unassigned_cause(_tu, _reachable_set, result.demands)
+                if _cause["case"] == "topology":
+                    _n_orig = _cause["unreachable_origin_count"]
+                    st.error(
+                        f"**{_tu:,} people from {_n_orig} barangay pickup "
+                        f"point(s) could not be assigned "
+                        f"({_tu / max(_td, 1):.0%}).**"
+                    )
+                    st.write(
+                        "FloodRoute found no route from these pickup points to a "
+                        "selected facility in the current map model."
+                    )
+                    st.caption(
+                        "Map-data note: The model uses OpenStreetMap-derived roads "
+                        "and snapped pickup-point coordinates. Missing or disconnected "
+                        "map data may affect the result; this does not confirm "
+                        "real-world inaccessibility."
+                    )
+                else:
+                    _panel_reason = summarise_unassigned(
+                        _tu, _reachable_set, result.demands
+                    )
+                    st.error(
+                        f"**{_tu:,} without an assignment** "
+                        f"({_tu / max(_td, 1):.0%}) — {_panel_reason}"
+                    )
                 # ── Unassigned origins breakdown ──────────────────────────
                 _u_rows = unassigned_rows(result, _NODE_INFO)
                 if _u_rows:
@@ -1511,69 +1578,36 @@ Capacity is strictly enforced. Demand is split across facilities as needed.
     # ── Hamilton allocation ─────────────────────────────────────────────────
     with st.expander("Hamilton allocation and demand rounding", expanded=False):
         st.markdown("""
-Demand is distributed proportionally using the **largest-remainder method** (Hamilton method):
+**Hamilton method (largest-remainder method)** distributes integer demand across
+barangays so that every barangay receives a whole-number quota and the total
+equals the scenario demand exactly.
 
-                            )
-                        else:
-                            st.caption(f"✓ All {_row['demand']:,} people assigned")
+**Steps:**
+1. Compute proportional quota: `quota_i = population_i / total_population × scenario_demand`
+2. Assign floor: `floor_i = floor(quota_i)`
+3. Compute remainder: `remainder_i = quota_i − floor_i`
+4. Sum of floors may be less than `scenario_demand`. Distribute the surplus —
+   one unit each — to the barangays with the **largest** remainders until the
+   total is exact.
 
-            if len(_bgy_rows) > 12:
-                st.caption(f"… and {len(_bgy_rows) - 12} more barangays (see Technical Details)")
-
-            st.divider()
-
-            # ── Facility utilisation ──────────────────────────────────────
-            st.markdown("**Facility utilisation**")
-            _reachable_nodes = {s for (_, s) in result.od_costs_scenario}
-            for _sn, _sc in sorted(_shelters_r.items()):
-                _slbl = _labels_r.get(_sn, f"Facility {_sn}")
-                _load = int(metrics.get(f"shelter_{_sn}_load", 0))
-                _rem = max(0, _sc - _load)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+Each barangay's demand is at most 1 unit away from its exact proportional share.
+Ties in remainder are broken by barangay node ID (ascending), giving a
+deterministic allocation across reruns.
 """)
+
+    # ── Stage 8 legacy reproducibility benchmark ────────────────────────────
+    with st.expander("Stage 8 legacy reproducibility benchmark", expanded=False):
+        st.caption(
+            "⚠️ Reproduces Stage 8 results using scenario supply points "
+            "nodes 33 and 58 (assumed capacities 12,000 and 10,000). "
+            "These are **not** real registered shelter records. "
+            "For formal Stage 11 experiments use the Experimental Evaluation tab."
+        )
         _run_alg_label = st.radio(
             "Algorithm",
             ["C — FloodRoute MCF", "A — Ordinary nearest", "B — Flood-aware nearest"],
             key="tech_alg_radio",
         )
-    # ── Provenance and limitations ──────────────────────────────────────────
-
-
-
-
-
-
-
-
 
 
         _run_frac = st.selectbox(
@@ -1584,13 +1618,6 @@ Demand is distributed proportionally using the **largest-remainder method** (Ham
             key="tech_frac",
         )
         _run_rp = st.selectbox("Return period", list(RETURN_PERIODS), index=1, key="tech_rp")
-        st.caption(
-            "**Legacy preset** — uses named scenario nodes 33 and 58 "
-            "(``legacy_unknown_shelter_node_33`` and Atabay Elementary School). "
-            "These are the original Stage 8 scenario-based supply points, "
-            "retained for reproducibility. Capacities 12,000 and 10,000 are "
-            "experimental assumptions, not official figures."
-        )
         if st.button("Run Stage 8 benchmark (legacy preset)", key="tech_run_stage8"):
             with st.spinner("Running…"):
                 _G8 = _load_graph()
@@ -1607,3 +1634,10 @@ Demand is distributed proportionally using the **largest-remainder method** (Ham
                 st.metric("Assignment rate", f"{_m8['assignment_rate']:.1%}")
                 st.metric("Total assigned", f"{_m8['total_assigned']:,}")
                 st.metric("Total unassigned", f"{_m8['total_unassigned']:,}")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# TAB 3: EXPERIMENTAL EVALUATION
+# ═══════════════════════════════════════════════════════════════════════════
+with experiment_tab:
+    render_experiment_page(_load_graph(), origins)

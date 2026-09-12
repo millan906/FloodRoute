@@ -213,6 +213,59 @@ PLANNER_ROUTING_METHOD: str = (
 )
 
 
+def classify_unassigned_cause(
+    total_unassigned: int,
+    reachable_origins: set,
+    demands: dict,
+) -> dict:
+    """Classify why demand was unassigned and return structured cause data.
+
+    Used by the dashboard to select the correct display variant for the
+    unassigned-demand warning panel.
+
+    Parameters
+    ----------
+    total_unassigned:
+        Total unassigned demand units.
+    reachable_origins:
+        Set of origin nodes that have at least one reachable facility.
+    demands:
+        ``{origin_node: demand_units}`` for all demand-carrying origins.
+
+    Returns
+    -------
+    dict
+        ``case``: ``'topology'`` when all unassigned demand is from unreachable
+        origins; ``'capacity'`` when all unassigned demand is capacity-constrained;
+        ``'mixed'`` otherwise.
+        ``unreachable_demand``: int — units from origins with no route to any
+        facility.
+        ``capacity_demand``: int — units from reachable origins that ran out of
+        capacity.
+        ``unreachable_origin_count``: int — number of origins with positive demand
+        and no route to any facility.
+    """
+    unreachable_demand = sum(
+        d for o, d in demands.items() if o not in reachable_origins
+    )
+    capacity_demand = total_unassigned - unreachable_demand
+    unreachable_origin_count = sum(
+        1 for o, d in demands.items() if d > 0 and o not in reachable_origins
+    )
+    if capacity_demand <= 0:
+        case = "topology"
+    elif unreachable_demand <= 0:
+        case = "capacity"
+    else:
+        case = "mixed"
+    return {
+        "case": case,
+        "unreachable_demand": unreachable_demand,
+        "capacity_demand": capacity_demand,
+        "unreachable_origin_count": unreachable_origin_count,
+    }
+
+
 def summarise_unassigned(
     total_unassigned: int,
     reachable_origins: set,
@@ -322,7 +375,7 @@ def unassigned_rows(result, node_info: dict) -> list[dict]:
         if assigned > 0 or node in reachable:
             reason = "insufficient reachable capacity"
         else:
-            reason = "no modeled route"
+            reason = "No route found in current map data."
 
         rows.append({
             "node": node,

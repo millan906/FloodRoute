@@ -17,13 +17,18 @@ capacities", "planning scenario, not real-time prediction".
 from __future__ import annotations
 
 import io
-import json
 import zipfile
+from pathlib import Path
 
 import streamlit as st
 
 from floodroute.dashboard.road_overrides import RoadOverrideStore
+from floodroute.experiments.manifest import save_experiment
 from floodroute.experiments.runner import (
+    _DEFAULT_BARANGAY_GPKG,
+    _DEFAULT_GRAPHML,
+    _DEFAULT_NODES_GPKG,
+    _DEFAULT_POP_CSV,
     SCENARIO_SHELTER_CAPACITIES,
     ExperimentConfig,
     generate_scenarios,
@@ -130,11 +135,39 @@ def render_experiment_page(G: object, origins: list) -> None:  # type: ignore[ty
         return
 
     # -----------------------------------------------------------------------
-    # Nominal capacities display
+    # Nominal capacities — prefer Evacuation Planner's current facility selection
     # -----------------------------------------------------------------------
-    nominal_caps = st.session_state.get("nominal_capacities", SCENARIO_SHELTER_CAPACITIES)
+    # run_params[4] is the {node_id: capacity} dict built by the Evacuation
+    # Planner from the current facility selection.  Using it here ensures that
+    # the experiment reflects the same facilities as the planner, not the
+    # hard-coded Stage 8 legacy nodes (33, 58).  Falls back to the Stage 11
+    # scenario defaults only when the planner has not yet been run.
+    _ep_run_params = st.session_state.get("run_params")
+    _planner_node_caps: dict[int, int] | None = (
+        _ep_run_params[4]
+        if isinstance(_ep_run_params, (list, tuple))
+        and len(_ep_run_params) > 4
+        and isinstance(_ep_run_params[4], dict)
+        and _ep_run_params[4]
+        else None
+    )
+    nominal_caps: dict[int, int] = (
+        _planner_node_caps
+        or st.session_state.get("nominal_capacities")
+        or dict(SCENARIO_SHELTER_CAPACITIES)
+    )
     with st.expander("Nominal experimental capacities"):
-        st.caption("These are scenario-based values, not verified shelter records.")
+        if _planner_node_caps:
+            st.caption(
+                "Using the current Evacuation Planner facility configuration. "
+                "Update facilities in the Evacuation Planner tab."
+            )
+        else:
+            st.caption(
+                "Stage 11 scenario defaults (nodes 33, 58 — scenario-based values, "
+                "not verified shelter records). "
+                "Configure facilities in the Evacuation Planner tab to override."
+            )
         for node, cap in nominal_caps.items():
             st.write(f"Shelter node {node}: {cap:,} units")
 
@@ -162,6 +195,11 @@ def render_experiment_page(G: object, origins: list) -> None:  # type: ignore[ty
     # -----------------------------------------------------------------------
     # Run buttons
     # -----------------------------------------------------------------------
+    # _override_dict_for_run captures the exact override state used in both
+    # _make_config (for the hash) and run_experiment (for routing).  Using
+    # the same object ensures the manifest hash matches what was actually run.
+    _override_dict_for_run = st.session_state.get("road_override_store_dict") or {}
+
     def _make_config(pilot: bool) -> ExperimentConfig:
         return make_experiment_config(
             municipality="PH0600613",
@@ -172,7 +210,11 @@ def render_experiment_page(G: object, origins: list) -> None:  # type: ignore[ty
             flood_penalties=flood_penalties_typed,
             nominal_capacities=nominal_caps,
             pilot_mode=pilot,
+            road_overrides=_override_dict_for_run,
         )
+
+    # Compute the "would-run" config hash for stale detection (cheap — no routing).
+    _current_config_hash = _make_config(pilot=False).configuration_hash
 
     col_pilot, col_full = st.columns(2)
 
@@ -195,6 +237,9 @@ def render_experiment_page(G: object, origins: list) -> None:  # type: ignore[ty
             prog.progress(1.0)
             st.session_state["experiment_results"] = results
             st.session_state["experiment_config"] = config
+            # Freeze source_scenario_id at run time so export reflects the
+            # exact preset that was loaded when this run was triggered.
+            st.session_state["experiment_sc_id_at_run"] = st.session_state.get("sc_id")
             st.success(f"Pilot complete: {len(results)} scenario(s).")
 
     with col_full:
@@ -219,6 +264,8 @@ def render_experiment_page(G: object, origins: list) -> None:  # type: ignore[ty
                 prog.progress(1.0)
                 st.session_state["experiment_results"] = results_full
                 st.session_state["experiment_config"] = config
+                # Freeze source_scenario_id at run time.
+                st.session_state["experiment_sc_id_at_run"] = st.session_state.get("sc_id")
                 st.success(f"Full experiment complete: {len(results_full)} scenarios.")
 
     # -----------------------------------------------------------------------
@@ -261,6 +308,40 @@ def render_experiment_page(G: object, origins: list) -> None:  # type: ignore[ty
 
     df = pd.DataFrame(rows)
     st.dataframe(df, use_container_width=True)
+
+    # Direct facility-utilisation CSV download (in-memory, no save required)
+    _fac_util_rows: list[dict] = []
+    for sr in results:
+        k = sr.key
+        for s, fm in sorted(sr.facility_metrics.items(), key=str):
+            _fac_util_rows.append({
+                "algorithm": k.algorithm,
+                "return_period": k.return_period,
+                "demand_fraction": k.demand_fraction,
+                "capacity_multiplier": k.capacity_multiplier,
+                "flood_penalty": str(k.flood_penalty),
+                "shelter_node": s,
+                "nominal_capacity": sr.nominal_capacities.get(s, ""),
+                "adjusted_capacity": sr.adjusted_capacities.get(s, fm.get("capacity", "")),
+                "load": fm.get("load", 0),
+                "utilization": fm.get("utilization", 0.0),
+                "overflow": fm.get("overflow", 0),
+            })
+    if _fac_util_rows:
+        _fac_util_buf = io.StringIO()
+        _fac_util_fieldnames = list(_fac_util_rows[0].keys())
+        import csv as _csv
+        _fac_util_writer = _csv.DictWriter(_fac_util_buf, fieldnames=_fac_util_fieldnames,
+                                           lineterminator="\n")
+        _fac_util_writer.writeheader()
+        _fac_util_writer.writerows(_fac_util_rows)
+        st.download_button(
+            label="Download facility utilisation CSV",
+            data=_fac_util_buf.getvalue().encode("utf-8"),
+            file_name="facility_metrics.csv",
+            mime="text/csv",
+            key="download_facility_util_csv",
+        )
 
     # Assignment-rate comparison
     st.subheader("Assignment rate by algorithm")
@@ -314,8 +395,9 @@ def render_experiment_page(G: object, origins: list) -> None:  # type: ignore[ty
     # -----------------------------------------------------------------------
     if config_used is not None:
         with st.expander("Manifest preview (JSON)"):
-            manifest_preview = {
+            st.json({
                 "experiment_id": config_used.experiment_id,
+                "configuration_hash": config_used.configuration_hash,
                 "created_utc": config_used.created_utc,
                 "municipality": config_used.municipality,
                 "algorithms": list(config_used.algorithms),
@@ -327,138 +409,143 @@ def render_experiment_page(G: object, origins: list) -> None:  # type: ignore[ty
                     str(k): v for k, v in config_used.nominal_capacities.items()
                 },
                 "pilot_mode": config_used.pilot_mode,
+                "num_scenarios": len(results),
+            })
+
+    # -----------------------------------------------------------------------
+    # Save evidence bundle — explicit action, not automatic
+    # -----------------------------------------------------------------------
+    st.subheader("Evidence bundle")
+    st.caption(
+        "Save an immutable evidence folder to disk, then download a ZIP of the "
+        "same files.  Saving is an explicit action — runs are never saved automatically."
+    )
+
+    _saved_dir: Path | None = st.session_state.get("saved_experiment_dir")
+
+    # Stale-result guard: warn when any relevant input has changed since the
+    # last run.  config_used is the frozen ExperimentConfig from the run;
+    # _current_config_hash is the hash of what WOULD run with current UI state
+    # (computed above from _make_config).  Because road_overrides are included
+    # in the hash, any override change also triggers staleness.
+    _exp_config_at_run: ExperimentConfig | None = st.session_state.get("experiment_config")
+    _results_stale = (
+        results is not None
+        and config_used is not None
+        and config_used.configuration_hash != _current_config_hash
+    )
+    if _results_stale:
+        st.warning(
+            "The displayed results are from a previous run configuration. "
+            "Re-run the experiment before saving to ensure the bundle matches "
+            "the current settings.",
+            icon="⚠️",
+        )
+
+    _save_disabled = _results_stale or config_used is None
+
+    if st.button(
+        "Save evidence bundle to disk",
+        key="save_evidence_btn",
+        type="primary",
+        disabled=_save_disabled,
+        help=(
+            "Writes experiments/<experiment_id>/ with manifest, CSVs and checksums. "
+            "Each save creates a new immutable directory. "
+            "Disabled when results are stale (config changed since last run)."
+        ),
+    ):
+        # Reconciliation check: assignments sum must equal total_assigned metric.
+        _reconcile_errors: list[str] = []
+        for _sr in results:
+            _metric_assigned = _sr.metrics.get("total_assigned", None)
+            if _metric_assigned is not None:
+                _asgn_sum = sum(_sr.assignments.values())
+                if _asgn_sum != int(_metric_assigned):
+                    _reconcile_errors.append(
+                        f"Scenario {_sr.key}: assignments sum {_asgn_sum} "
+                        f"≠ total_assigned metric {int(_metric_assigned)}"
+                    )
+        if _reconcile_errors:
+            st.error(
+                "Reconciliation failed — assignments CSV would not match metrics. "
+                "Do not use this bundle for analysis.\n\n"
+                + "\n".join(_reconcile_errors)
+            )
+        else:
+            # Collect facility registry rows from catalog + nominal capacities.
+            _fac_rows: list[dict] = []
+            try:
+                from floodroute.scenario.catalog import build_catalog
+                _cat = build_catalog()
+                for fid, configured_cap in st.session_state.get("sc_facility_caps", {}).items():
+                    _entry = _cat.get(fid)
+                    if _entry is not None:
+                        _fac_rows.append({
+                            "facility_id": fid,
+                            "name": _entry.name,
+                            "facility_type": _entry.facility_type,
+                            "designation_status": _entry.designation_status,
+                            "snapped_node": _entry.snapped_node,
+                            "snapping_distance_m": _entry.snapping_distance_m,
+                            "configured_capacity": configured_cap,
+                        })
+            except Exception:  # noqa: BLE001
+                pass  # catalog unavailable — facility_registry.csv will be empty
+
+            # Dataset inventory paths (relative to project root).
+            _project_root = Path(__file__).resolve().parent.parent.parent.parent
+            _hazard_gpkg = Path("data/processed/hazard/PH0600613_phase_b_enriched.gpkg")
+            _dataset_paths: dict[str, Path] = {
+                "road_graph": _project_root / _DEFAULT_GRAPHML,
+                "population_csv": _project_root / _DEFAULT_POP_CSV,
+                "barangay_boundaries": _project_root / _DEFAULT_BARANGAY_GPKG,
+                "nodes_gpkg": _project_root / _DEFAULT_NODES_GPKG,
+                "hazard_gpkg": _project_root / _hazard_gpkg,
             }
-            st.json(manifest_preview)
+
+            with st.spinner("Saving evidence bundle…"):
+                try:
+                    _saved_path = save_experiment(
+                        config_used,
+                        results,
+                        # Use the sc_id that was active when the run was triggered,
+                        # not the current sc_id which may have changed since then.
+                        source_scenario_id=st.session_state.get("experiment_sc_id_at_run"),
+                        # road_overrides come from config_used.road_overrides (frozen
+                        # at run time); no need to re-read mutable session state.
+                        facility_registry_rows=_fac_rows or None,
+                        origins=origins,
+                        dataset_paths=_dataset_paths,
+                    )
+                    st.session_state["saved_experiment_dir"] = _saved_path
+                    _saved_dir = _saved_path
+                    st.success(f"Saved: `{_saved_path.name}`")
+                except FileExistsError:
+                    st.error(
+                        "This experiment directory already exists on disk. "
+                        "Run the experiment again to generate a new timestamp-based ID."
+                    )
+                except Exception as _exc:  # noqa: BLE001
+                    st.error(f"Save failed: {_exc}")
 
     # -----------------------------------------------------------------------
-    # Download evidence bundle (zip)
+    # Download ZIP — built from the saved directory (identical to disk files)
     # -----------------------------------------------------------------------
-    st.subheader("Download evidence bundle")
-
-    if config_used is not None:
+    if _saved_dir is not None and _saved_dir.exists() and config_used is not None:
+        _zip_files = sorted(_saved_dir.iterdir())
         zip_buf = io.BytesIO()
         with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
-            # Manifest
-            manifest_json = json.dumps(
-                {
-                    "experiment_id": config_used.experiment_id,
-                    "created_utc": config_used.created_utc,
-                    "municipality": config_used.municipality,
-                    "algorithms": list(config_used.algorithms),
-                    "return_periods": list(config_used.return_periods),
-                    "demand_fractions": list(config_used.demand_fractions),
-                    "capacity_multipliers": list(config_used.capacity_multipliers),
-                    "flood_penalties": [str(p) for p in config_used.flood_penalties],
-                    "nominal_capacities": {
-                        str(k): v for k, v in config_used.nominal_capacities.items()
-                    },
-                    "pilot_mode": config_used.pilot_mode,
-                    "num_scenarios": len(results),
-                },
-                indent=2,
-            )
-            zf.writestr("manifest.json", manifest_json)
-
-            # Scenario results CSV
-            import csv as _csv
-
-            csv_buf = io.StringIO()
-            if results:
-                first_sr = results[0]
-                flat_keys = [
-                    k for k, v in first_sr.metrics.items()
-                    if not isinstance(v, dict)
-                ]
-                fieldnames = [
-                    "algorithm", "return_period", "demand_fraction",
-                    "capacity_multiplier", "flood_penalty", "run_status",
-                ] + flat_keys
-                writer = _csv.DictWriter(
-                    csv_buf, fieldnames=fieldnames, extrasaction="ignore",
-                    lineterminator="\n",
-                )
-                writer.writeheader()
-                for sr in results:
-                    row = {
-                        "algorithm": sr.key.algorithm,
-                        "return_period": sr.key.return_period,
-                        "demand_fraction": sr.key.demand_fraction,
-                        "capacity_multiplier": sr.key.capacity_multiplier,
-                        "flood_penalty": str(sr.key.flood_penalty),
-                        "run_status": sr.run_status,
-                    }
-                    for k in flat_keys:
-                        row[k] = sr.metrics.get(k, "")
-                    writer.writerow(row)
-            zf.writestr("scenario_results.csv", csv_buf.getvalue())
-
+            for _fp in _zip_files:
+                if _fp.is_file():
+                    zf.write(_fp, arcname=_fp.name)
         zip_buf.seek(0)
         st.download_button(
             label="Download evidence bundle (zip)",
             data=zip_buf,
             file_name=f"floodroute_experiment_{config_used.experiment_id}.zip",
             mime="application/zip",
+            key="download_evidence_zip",
         )
-
-        with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
-            # Manifest
-            manifest_json = json.dumps(
-                {
-                    "experiment_id": config_used.experiment_id,
-                    "created_utc": config_used.created_utc,
-                    "municipality": config_used.municipality,
-                    "algorithms": list(config_used.algorithms),
-                    "return_periods": list(config_used.return_periods),
-                    "demand_fractions": list(config_used.demand_fractions),
-                    "capacity_multipliers": list(config_used.capacity_multipliers),
-                    "flood_penalties": [str(p) for p in config_used.flood_penalties],
-                    "nominal_capacities": {
-                        str(k): v for k, v in config_used.nominal_capacities.items()
-                    },
-                    "pilot_mode": config_used.pilot_mode,
-                    "num_scenarios": len(results),
-                },
-                indent=2,
-            )
-            zf.writestr("manifest.json", manifest_json)
-
-            # Scenario results CSV
-            import csv as _csv
-
-            csv_buf = io.StringIO()
-            if results:
-                first_sr = results[0]
-                flat_keys = [
-                    k for k, v in first_sr.metrics.items()
-                    if not isinstance(v, dict)
-                ]
-                fieldnames = [
-                    "algorithm", "return_period", "demand_fraction",
-                    "capacity_multiplier", "flood_penalty", "run_status",
-                ] + flat_keys
-                writer = _csv.DictWriter(
-                    csv_buf, fieldnames=fieldnames, extrasaction="ignore",
-                    lineterminator="\n",
-                )
-                writer.writeheader()
-                for sr in results:
-                    row = {
-                        "algorithm": sr.key.algorithm,
-                        "return_period": sr.key.return_period,
-                        "demand_fraction": sr.key.demand_fraction,
-                        "capacity_multiplier": sr.key.capacity_multiplier,
-                        "flood_penalty": str(sr.key.flood_penalty),
-                        "run_status": sr.run_status,
-                    }
-                    for k in flat_keys:
-                        row[k] = sr.metrics.get(k, "")
-                    writer.writerow(row)
-            zf.writestr("scenario_results.csv", csv_buf.getvalue())
-
-        zip_buf.seek(0)
-        st.download_button(
-            label="Download evidence bundle (zip)",
-            data=zip_buf,
-            file_name=f"floodroute_experiment_{config_used.experiment_id}.zip",
-            mime="application/zip",
-        )
+    elif config_used is not None and _saved_dir is None:
+        st.info("Save the evidence bundle above to enable download.")

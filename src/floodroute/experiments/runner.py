@@ -28,6 +28,7 @@ results_detailed.json — same 27 rows with full assignments and route lists
 from __future__ import annotations
 
 import csv
+import dataclasses
 import hashlib
 import json
 import subprocess
@@ -44,6 +45,7 @@ from floodroute.experiments.algorithms import (
     DEMAND_FRACTIONS,
     RETURN_PERIODS,
     RunResult,
+    make_ordinary_weight_fn,
     run_flood_aware_nearest,
     run_floodroute_assignment,
     run_ordinary_nearest,
@@ -306,9 +308,9 @@ class ExperimentConfig:
     """Unique run identifier: ``<UTC-timestamp>_<configuration_hash>``."""
 
     configuration_hash: str
-    """Deterministic 12-hex-char SHA-256 of normalised scientific parameters.
-    Identical configurations always yield the same hash regardless of when
-    the experiment is run."""
+    """Deterministic 12-hex-char SHA-256 of normalised scientific parameters,
+    including canonicalized road overrides.  Identical configurations always
+    yield the same hash regardless of when the experiment is run."""
 
     municipality: str
     """Municipality PSGC code (e.g. ``'PH0600613'``)."""
@@ -337,6 +339,12 @@ class ExperimentConfig:
     created_utc: str
     """ISO 8601 UTC timestamp when the config was created."""
 
+    road_overrides: dict = dataclasses.field(default_factory=dict)
+    """Canonicalized directed edge overrides frozen at run time.
+    Keys are ``"u,v"`` strings; values are override attribute dicts.
+    Included in ``configuration_hash`` so two runs with different overrides
+    always produce different hashes."""
+
 
 def make_experiment_config(
     municipality: str,
@@ -347,16 +355,31 @@ def make_experiment_config(
     flood_penalties: tuple = (1.0, 10.0, "prohibited"),
     nominal_capacities: dict | None = None,
     pilot_mode: bool = False,
+    road_overrides: dict | None = None,
 ) -> ExperimentConfig:
     """Construct an ExperimentConfig with configuration_hash and unique experiment_id.
 
     The ``configuration_hash`` is a deterministic 12-hex SHA-256 of the
     scientific parameters; it is identical for identical configurations.
+    Road overrides are canonicalized (sorted by edge key, sub-keys sorted) and
+    included in the hash so two runs that differ only in overrides are distinct.
     The ``experiment_id`` prepends a UTC timestamp so that each run is unique
     and a legitimate rerun of the same configuration is always allowed.
+
+    Parameters
+    ----------
+    road_overrides:
+        Optional dict in ``road_override_store_dict`` format
+        (``{"u,v": {u, v, status, ...}, ...}``).  When ``None`` the override
+        set is treated as empty (equivalent to no overrides).
     """
     if nominal_capacities is None:
         nominal_capacities = dict(SCENARIO_SHELTER_CAPACITIES)
+    # Canonicalize road overrides: sort by edge key, then sort each sub-dict.
+    _ro = road_overrides or {}
+    canonical_overrides: dict = {
+        k: dict(sorted(_ro[k].items())) for k in sorted(_ro)
+    }
     now_utc = datetime.now(UTC)
     created_utc = now_utc.isoformat()
     timestamp = now_utc.strftime("%Y%m%dT%H%M%SZ")
@@ -369,6 +392,7 @@ def make_experiment_config(
         "flood_penalties": list(flood_penalties),
         "nominal_capacities": {str(k): v for k, v in nominal_capacities.items()},
         "pilot_mode": pilot_mode,
+        "road_overrides": canonical_overrides,
     }
     config_hash = make_configuration_hash(config_dict)
     exp_id = make_experiment_id(config_hash, timestamp)
@@ -384,6 +408,7 @@ def make_experiment_config(
         nominal_capacities=dict(nominal_capacities),
         pilot_mode=pilot_mode,
         created_utc=created_utc,
+        road_overrides=canonical_overrides,
     )
 
 
@@ -412,6 +437,14 @@ class ScenarioResult:
     unassigned_reasons: dict  # {origin_node: "unreachable"|"capacity_exhausted"}
     run_status: str
     error_message: str | None
+    barangay_demand: dict = None  # {adm4_pcode: demand_units} — Hamilton-apportioned audit trail
+    demands: dict = None  # {origin_node: demand_units} — per-origin demand for unassigned export
+
+    def __post_init__(self):
+        if self.barangay_demand is None:
+            self.barangay_demand = {}
+        if self.demands is None:
+            self.demands = {}
 
 
 def generate_scenarios(config: ExperimentConfig) -> list[ScenarioKey]:
@@ -486,14 +519,23 @@ def run_scenario(
     adj_caps = _adjusted_capacities(config.nominal_capacities, key.capacity_multiplier)
 
     try:
-        demands, _ = build_demands(origins, key.demand_fraction)
+        demands, barangay_demand_dict = build_demands(origins, key.demand_fraction)
 
         # Build origin → psgc mapping for B+ deterministic tie-breaking
         origin_psgc = {o.origin_node: o.psgc for o in origins}
 
-        # Build override-aware weight function for flood-aware algorithms.
-        # Algorithm A uses ordinary routing and ignores the flood penalty override.
+        # Build override-aware weight functions.
+        # Two variants are constructed when overrides are present:
+        #   _flood_override_wfn   — full overrides (closures + flood penalties) for B, B+, C
+        #   _closures_only_wfn    — hard-closure overrides only (no flood penalty) for A
+        #
+        # Algorithm A must honour operationally closed / impassable roads but must
+        # NOT apply flood-deterrence cost multipliers (those belong to flood-aware
+        # routing only).  Passing flood_penalty_fn=None to apply_overrides achieves
+        # this: _IMPASSABLE edges become None (blocked), all others fall through to
+        # the ordinary length-based weight function unchanged.
         _flood_override_wfn = None
+        _closures_only_wfn = None
         if road_override_store and len(road_override_store) > 0:
             _base_flood_wfn = make_weight_fn(key.return_period)
             _flood_override_wfn = apply_overrides(
@@ -501,9 +543,17 @@ def run_scenario(
                 road_override_store,
                 flood_penalty_fn=_base_flood_wfn,
             )
+            _closures_only_wfn = apply_overrides(
+                make_ordinary_weight_fn(),
+                road_override_store,
+                flood_penalty_fn=None,  # no flood cost for Algorithm A
+            )
 
         if key.algorithm == "A":
-            result = run_ordinary_nearest(G, demands, adj_caps, key.return_period)
+            result = run_ordinary_nearest(
+                G, demands, adj_caps, key.return_period,
+                weight_fn=_closures_only_wfn,  # None when no overrides → uses default
+            )
         elif key.algorithm == "B":
             result = run_flood_aware_nearest(
                 G, demands, adj_caps, key.return_period,
@@ -585,6 +635,8 @@ def run_scenario(
             unassigned_reasons=unassigned_reasons,
             run_status="completed",
             error_message=None,
+            barangay_demand=dict(barangay_demand_dict),
+            demands=dict(demands),
         )
 
     except Exception as exc:  # noqa: BLE001

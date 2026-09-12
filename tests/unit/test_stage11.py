@@ -497,6 +497,7 @@ def _make_minimal_config_and_results():
         unassigned_reasons={},
         run_status="completed",
         error_message=None,
+        barangay_demand={"PH0600613001": 10},
     )
     return config, [sr]
 
@@ -622,6 +623,7 @@ def test_integrity_check_catches_capacity_violation():
         unassigned_reasons={},
         run_status="completed",
         error_message=None,
+        barangay_demand={},
     )
     demands_by_scenario = {key: {1: 10}}
     violations = validate_experiment([sr], config, demands_by_scenario)
@@ -876,6 +878,267 @@ def test_algorithm_c_label():
     assert "exact" in label.lower() or "MCF" in label or "minimum-cost" in label.lower()
     # Must NOT claim broader optimality
     assert "globally optimal evacuation" not in label.lower()
+
+
+# ---------------------------------------------------------------------------
+# Stage 11 evidence-saving corrections
+# ---------------------------------------------------------------------------
+
+
+def test_scenario_result_has_barangay_demand_field():
+    """ScenarioResult carries a barangay_demand dict (PSGC → demand units)."""
+    from floodroute.experiments.runner import ScenarioKey, ScenarioResult
+    key = ScenarioKey("A", "RP100", 0.25, 1.0, 10.0)
+    sr = ScenarioResult(
+        key=key,
+        nominal_capacities={33: 100},
+        adjusted_capacities={33: 100},
+        metrics={},
+        assignments={},
+        route_metrics={},
+        facility_metrics={},
+        unassigned_reasons={},
+        run_status="completed",
+        error_message=None,
+        barangay_demand={"PH0600613001": 5, "PH0600613002": 3},
+    )
+    assert sr.barangay_demand == {"PH0600613001": 5, "PH0600613002": 3}
+
+
+def test_scenario_result_barangay_demand_defaults_to_empty():
+    """ScenarioResult.barangay_demand defaults to {} when not supplied."""
+    from floodroute.experiments.runner import ScenarioKey, ScenarioResult
+    key = ScenarioKey("A", "RP100", 0.25, 1.0, 10.0)
+    sr = ScenarioResult(
+        key=key,
+        nominal_capacities={},
+        adjusted_capacities={},
+        metrics={},
+        assignments={},
+        route_metrics={},
+        facility_metrics={},
+        unassigned_reasons={},
+        run_status="completed",
+        error_message=None,
+    )
+    assert sr.barangay_demand == {}
+
+
+def test_run_scenario_populates_barangay_demand():
+    """run_scenario stores per-barangay Hamilton demand from build_demands."""
+    import networkx as nx
+
+    from floodroute.experiments.demand import BarangayOrigin
+    from floodroute.experiments.runner import (
+        ScenarioKey,
+        make_experiment_config,
+        run_scenario,
+    )
+    G = nx.MultiDiGraph()
+    G.add_node(1)
+    G.add_node(2)
+    G.add_edge(1, 2, length_m=100.0, jrc_rp100_status="modelled_dry",
+               jrc_rp10_status="modelled_dry", jrc_rp20_status="modelled_dry")
+    origins = [BarangayOrigin(
+        psgc="PH0600613001", name="Poblacion", population_2020=100,
+        origin_node=1, snap_distance_m=10.0,
+    )]
+    config = make_experiment_config(
+        municipality="PH0600613",
+        algorithms=("A",),
+        return_periods=("RP100",),
+        demand_fractions=(0.25,),
+        capacity_multipliers=(1.0,),
+        flood_penalties=(10.0,),
+        nominal_capacities={2: 200},
+        pilot_mode=False,
+    )
+    key = ScenarioKey("A", "RP100", 0.25, 1.0, 10.0)
+    sr = run_scenario(G, origins, config, key)
+    assert isinstance(sr.barangay_demand, dict)
+    assert "PH0600613001" in sr.barangay_demand
+    assert sr.barangay_demand["PH0600613001"] == 25  # round(100 * 0.25)
+
+
+def test_save_experiment_writes_barangay_demand_csv(tmp_path):
+    """save_experiment writes barangay_demand.csv with correct columns and rows."""
+    from floodroute.experiments.manifest import save_experiment
+    config, results = _make_minimal_config_and_results()
+    # results[0].barangay_demand = {"PH0600613001": 10} (set in _make_minimal_config_and_results)
+    exp_dir = save_experiment(config, results, experiments_root=tmp_path)
+    csv_path = exp_dir / "barangay_demand.csv"
+    assert csv_path.exists(), "barangay_demand.csv must be written"
+    text = csv_path.read_text(encoding="utf-8")
+    assert "demand_fraction" in text
+    assert "adm4_pcode" in text
+    assert "barangay_name" in text
+    assert "origin_node" in text
+    assert "demand_units" in text
+    assert "PH0600613001" in text
+    assert "10" in text
+
+
+def test_save_experiment_barangay_demand_deduplicates_by_fraction(tmp_path):
+    """barangay_demand.csv has one row per (fraction, psgc), not one per scenario."""
+    from floodroute.experiments.manifest import save_experiment
+    from floodroute.experiments.runner import ScenarioKey, ScenarioResult, make_experiment_config
+    config = make_experiment_config(
+        municipality="PH0600613",
+        algorithms=("A", "B"),
+        return_periods=("RP100",),
+        demand_fractions=(0.25,),
+        capacity_multipliers=(1.0,),
+        flood_penalties=(10.0,),
+        nominal_capacities={33: 100},
+        pilot_mode=False,
+    )
+    # Two scenarios at same fraction — barangay_demand is identical
+    def _sr(alg):
+        return ScenarioResult(
+            key=ScenarioKey(alg, "RP100", 0.25, 1.0, 10.0),
+            nominal_capacities={33: 100},
+            adjusted_capacities={33: 100},
+            metrics={},
+            assignments={},
+            route_metrics={},
+            facility_metrics={},
+            unassigned_reasons={},
+            run_status="completed",
+            error_message=None,
+            barangay_demand={"PH0600613001": 7},
+        )
+    results = [_sr("A"), _sr("B")]
+    exp_dir = save_experiment(config, results, experiments_root=tmp_path)
+    lines = (exp_dir / "barangay_demand.csv").read_text(encoding="utf-8").strip().splitlines()
+    # Header + one data row (deduplicated)
+    assert len(lines) == 2, f"Expected 1 data row (header + 1), got {len(lines) - 1}"
+
+
+def test_save_experiment_writes_facility_registry_csv(tmp_path):
+    """save_experiment writes facility_registry.csv with supplied rows."""
+    from floodroute.experiments.manifest import save_experiment
+    config, results = _make_minimal_config_and_results()
+    fac_rows = [
+        {
+            "facility_id": "SJDB-001",
+            "name": "Harborview Elementary School",
+            "facility_type": "school",
+            "designation_status": "government_confirmed_from_published_sources",
+            "snapped_node": 33,
+            "snapping_distance_m": 42.1,
+            "configured_capacity": 20000,
+        }
+    ]
+    exp_dir = save_experiment(
+        config, results,
+        experiments_root=tmp_path,
+        facility_registry_rows=fac_rows,
+    )
+    csv_path = exp_dir / "facility_registry.csv"
+    assert csv_path.exists(), "facility_registry.csv must be written"
+    text = csv_path.read_text(encoding="utf-8")
+    assert "facility_id" in text
+    assert "SJDB-001" in text
+    assert "Harborview Elementary School" in text
+    assert "20000" in text
+
+
+def test_save_experiment_facility_registry_csv_empty_when_none(tmp_path):
+    """save_experiment writes a header-only facility_registry.csv when rows are None."""
+    from floodroute.experiments.manifest import save_experiment
+    config, results = _make_minimal_config_and_results()
+    exp_dir = save_experiment(config, results, experiments_root=tmp_path)
+    text = (exp_dir / "facility_registry.csv").read_text(encoding="utf-8")
+    lines = [ln for ln in text.strip().splitlines() if ln]
+    assert len(lines) == 1, "Only the header row expected when no facility rows supplied"
+    assert "facility_id" in lines[0]
+
+
+def test_save_experiment_manifest_has_network_note(tmp_path):
+    """manifest.json contains the OSM network limitation statement."""
+    from floodroute.experiments.manifest import _NETWORK_NOTE, save_experiment
+    config, results = _make_minimal_config_and_results()
+    exp_dir = save_experiment(config, results, experiments_root=tmp_path)
+    manifest = json.loads((exp_dir / "manifest.json").read_text())
+    assert "network_note" in manifest
+    assert "OpenStreetMap" in manifest["network_note"]
+    assert manifest["network_note"] == _NETWORK_NOTE
+
+
+def test_save_experiment_manifest_has_source_scenario_id(tmp_path):
+    """manifest.json records source_scenario_id when supplied."""
+    from floodroute.experiments.manifest import save_experiment
+    config, results = _make_minimal_config_and_results()
+    exp_dir = save_experiment(
+        config, results,
+        experiments_root=tmp_path,
+        source_scenario_id="7cdc187852aa",
+    )
+    manifest = json.loads((exp_dir / "manifest.json").read_text())
+    assert manifest.get("source_scenario_id") == "7cdc187852aa"
+
+
+def test_save_experiment_manifest_source_scenario_id_null_when_absent(tmp_path):
+    """manifest.json records source_scenario_id as null when not supplied."""
+    from floodroute.experiments.manifest import save_experiment
+    config, results = _make_minimal_config_and_results()
+    exp_dir = save_experiment(config, results, experiments_root=tmp_path)
+    manifest = json.loads((exp_dir / "manifest.json").read_text())
+    assert "source_scenario_id" in manifest
+    assert manifest["source_scenario_id"] is None
+
+
+def test_save_experiment_manifest_has_road_overrides(tmp_path):
+    """manifest.json records serialized road overrides when supplied."""
+    from floodroute.experiments.manifest import save_experiment
+    config, results = _make_minimal_config_and_results()
+    overrides = {"1,2": {"u": 1, "v": 2, "status": "road_closed",
+                         "evidence_type": "controlled_assumption",
+                         "source_reference": "", "observation_time": "", "notes": ""}}
+    exp_dir = save_experiment(
+        config, results,
+        experiments_root=tmp_path,
+        road_overrides=overrides,
+    )
+    manifest = json.loads((exp_dir / "manifest.json").read_text())
+    assert "road_overrides" in manifest
+    assert "1,2" in manifest["road_overrides"]
+    assert manifest["road_overrides"]["1,2"]["status"] == "road_closed"
+
+
+def test_save_experiment_manifest_road_overrides_empty_when_none(tmp_path):
+    """manifest.json records road_overrides as {} when not supplied."""
+    from floodroute.experiments.manifest import save_experiment
+    config, results = _make_minimal_config_and_results()
+    exp_dir = save_experiment(config, results, experiments_root=tmp_path)
+    manifest = json.loads((exp_dir / "manifest.json").read_text())
+    assert "road_overrides" in manifest
+    assert manifest["road_overrides"] == {}
+
+
+def test_save_experiment_new_files_in_checksums(tmp_path):
+    """checksums.sha256 includes barangay_demand.csv and facility_registry.csv."""
+    from floodroute.experiments.manifest import save_experiment
+    config, results = _make_minimal_config_and_results()
+    exp_dir = save_experiment(config, results, experiments_root=tmp_path)
+    checksums_text = (exp_dir / "checksums.sha256").read_text(encoding="utf-8")
+    assert "barangay_demand.csv" in checksums_text
+    assert "facility_registry.csv" in checksums_text
+
+
+def test_save_experiment_barangay_demand_with_origins(tmp_path):
+    """barangay_demand.csv records barangay_name and origin_node when origins supplied."""
+    from floodroute.experiments.demand import BarangayOrigin
+    from floodroute.experiments.manifest import save_experiment
+    config, results = _make_minimal_config_and_results()
+    origins = [BarangayOrigin(
+        psgc="PH0600613001", name="Poblacion", population_2020=40,
+        origin_node=99, snap_distance_m=5.0,
+    )]
+    exp_dir = save_experiment(config, results, experiments_root=tmp_path, origins=origins)
+    text = (exp_dir / "barangay_demand.csv").read_text(encoding="utf-8")
+    assert "Poblacion" in text
+    assert "99" in text
 
 
 class TestResetEntireScenario:
@@ -1414,7 +1677,7 @@ class TestFacilityCatalog:
 
     def test_resolve_node_shelters_aggregates_colocated(self):
         """Two facilities sharing a node → capacities summed."""
-        from floodroute.scenario.catalog import build_catalog, CatalogEntry, FacilityCatalog
+        from floodroute.scenario.catalog import CatalogEntry, FacilityCatalog
         from floodroute.scenario.config import ScenarioConfig
         # Build a mini catalog with two entries on the same node
         e1 = CatalogEntry(
@@ -1471,7 +1734,10 @@ class TestScenarioPersistence:
     def test_round_trip(self, tmp_path):
         from floodroute.scenario.config import ScenarioConfig
         from floodroute.scenario.persistence import (
-            scenario_to_dict, scenario_from_dict, save_scenario, load_scenario,
+            load_scenario,
+            save_scenario,
+            scenario_from_dict,
+            scenario_to_dict,
         )
         sc = ScenarioConfig(
             selected_facility_ids=["SJDB-001", "way:123"],
@@ -1492,9 +1758,12 @@ class TestScenarioPersistence:
 
     def test_list_scenarios_sorted_by_updated(self, tmp_path):
         import time
+
         from floodroute.scenario.config import ScenarioConfig
         from floodroute.scenario.persistence import (
-            scenario_to_dict, save_scenario, list_scenarios,
+            list_scenarios,
+            save_scenario,
+            scenario_to_dict,
         )
         sc = ScenarioConfig()
         d1 = scenario_to_dict(sc, "fp1", "Alpha")
@@ -1510,7 +1779,10 @@ class TestScenarioPersistence:
     def test_delete_removes_file(self, tmp_path):
         from floodroute.scenario.config import ScenarioConfig
         from floodroute.scenario.persistence import (
-            scenario_to_dict, save_scenario, list_scenarios, delete_scenario,
+            delete_scenario,
+            list_scenarios,
+            save_scenario,
+            scenario_to_dict,
         )
         sc = ScenarioConfig()
         d = scenario_to_dict(sc, "fp1", "ToDelete")
@@ -1526,7 +1798,8 @@ class TestScenarioPersistence:
 
     def test_schema_version_mismatch_raises(self, tmp_path):
         import json
-        from floodroute.scenario.persistence import load_scenario, new_scenario_id, _safe_filename
+
+        from floodroute.scenario.persistence import _safe_filename, load_scenario, new_scenario_id
         sid = new_scenario_id()
         bad_doc = {"schema_version": "0.9", "scenario_id": sid, "scenario_name": "V0"}
         (tmp_path / _safe_filename(sid)).write_text(
@@ -1537,9 +1810,7 @@ class TestScenarioPersistence:
 
     def test_save_as_new_generates_different_id(self, tmp_path):
         from floodroute.scenario.config import ScenarioConfig
-        from floodroute.scenario.persistence import (
-            scenario_to_dict, save_scenario, new_scenario_id,
-        )
+        from floodroute.scenario.persistence import scenario_to_dict
         sc = ScenarioConfig()
         d1 = scenario_to_dict(sc, "fp1", "First")
         d2 = scenario_to_dict(sc, "fp1", "Second")
@@ -1555,7 +1826,10 @@ class TestScenarioPersistence:
     def test_flood_penalties_prohibited_round_trips(self, tmp_path):
         from floodroute.scenario.config import ScenarioConfig
         from floodroute.scenario.persistence import (
-            scenario_to_dict, scenario_from_dict, save_scenario, load_scenario,
+            load_scenario,
+            save_scenario,
+            scenario_from_dict,
+            scenario_to_dict,
         )
         sc = ScenarioConfig(flood_penalties=("prohibited",))
         d = scenario_to_dict(sc, "fp1", "Prohibited test")
@@ -1580,6 +1854,7 @@ class TestPastExperimentsDiscovery:
 
     def test_discover_finds_valid_manifest(self, tmp_path):
         import json
+
         from floodroute.dashboard.past_experiments import discover_experiments
         exp_dir = tmp_path / "exp_001"
         exp_dir.mkdir()
@@ -1614,6 +1889,7 @@ class TestPastExperimentsDiscovery:
 
     def test_verify_checksums_ok(self, tmp_path):
         import hashlib
+
         from floodroute.dashboard.past_experiments import verify_checksums
         content = b"results data here"
         h = hashlib.sha256(content).hexdigest()
@@ -1788,7 +2064,7 @@ class TestUnresolvedFacilityHandling:
         """scenario_from_dict with catalog returns unresolved facility IDs."""
         from floodroute.scenario.catalog import build_catalog
         from floodroute.scenario.config import ScenarioConfig
-        from floodroute.scenario.persistence import scenario_to_dict, scenario_from_dict
+        from floodroute.scenario.persistence import scenario_from_dict, scenario_to_dict
         cat = build_catalog()
         sc = ScenarioConfig(
             selected_facility_ids=["SJDB-001", "nonexistent:xyz"],
@@ -1803,7 +2079,7 @@ class TestUnresolvedFacilityHandling:
         """scenario_from_dict returns empty unresolved when all facilities in catalog."""
         from floodroute.scenario.catalog import build_catalog
         from floodroute.scenario.config import ScenarioConfig
-        from floodroute.scenario.persistence import scenario_to_dict, scenario_from_dict
+        from floodroute.scenario.persistence import scenario_from_dict, scenario_to_dict
         cat = build_catalog()
         sc = ScenarioConfig(
             selected_facility_ids=["SJDB-001"],
@@ -1815,7 +2091,7 @@ class TestUnresolvedFacilityHandling:
 
     def test_catalog_fingerprint_detectable(self):
         """Two different catalogs produce different fingerprints."""
-        from floodroute.scenario.catalog import FacilityCatalog, CatalogEntry
+        from floodroute.scenario.catalog import CatalogEntry, FacilityCatalog
         e1 = CatalogEntry(
             facility_id="A", name="A", facility_type="school",
             latitude=0.0, longitude=0.0, osm_element_type=None, osm_id_raw=None,
@@ -2011,12 +2287,17 @@ class TestStructuredOSMIdentity:
 def graph_and_origins_module():
     """Load graph + origins once per module for reachability tests."""
     import networkx as nx
+
     from floodroute.experiments.demand import (
-        load_psa_population, snap_barangay_origins,
+        load_psa_population,
+        snap_barangay_origins,
     )
     from floodroute.experiments.runner import (
-        _DEFAULT_GRAPHML, _DEFAULT_POP_CSV,
-        _DEFAULT_BARANGAY_GPKG, _DEFAULT_NODES_GPKG, MUNICIPALITY_PSGC,
+        _DEFAULT_BARANGAY_GPKG,
+        _DEFAULT_GRAPHML,
+        _DEFAULT_NODES_GPKG,
+        _DEFAULT_POP_CSV,
+        MUNICIPALITY_PSGC,
     )
     G = nx.read_graphml(str(_DEFAULT_GRAPHML), node_type=int)
     records = load_psa_population(_DEFAULT_POP_CSV, adm3_filter=MUNICIPALITY_PSGC)
@@ -2410,7 +2691,10 @@ class TestScenarioConfigRoadConditions:
     def test_road_conditions_round_trip(self, tmp_path):
         from floodroute.scenario.config import ScenarioConfig
         from floodroute.scenario.persistence import (
-            scenario_to_dict, scenario_from_dict, save_scenario, load_scenario,
+            load_scenario,
+            save_scenario,
+            scenario_from_dict,
+            scenario_to_dict,
         )
         rc = [
             {"road_name": "Rizal Street", "condition": "road_closed", "segment_count": 3},
@@ -2454,7 +2738,10 @@ class TestScenarioConfigRoadConditions:
         """Order of road_conditions entries is preserved through round-trip."""
         from floodroute.scenario.config import ScenarioConfig
         from floodroute.scenario.persistence import (
-            scenario_to_dict, scenario_from_dict, save_scenario, load_scenario,
+            load_scenario,
+            save_scenario,
+            scenario_from_dict,
+            scenario_to_dict,
         )
         rc = [
             {"road_name": "Alpha Road", "condition": "road_closed", "segment_count": 1},
@@ -2928,10 +3215,9 @@ class TestFeasibleColumnLogic:
 
     def test_algorithms_b_and_c_produce_zero_overflow_on_unconstrained_graph(self):
         """B+ and C must not overflow when total capacity > total demand."""
-        from floodroute.dashboard.road_overrides import RoadOverrideStore
+        from floodroute.experiments.demand import BarangayOrigin
         from floodroute.experiments.runner import run_scenario
         G = _make_override_graph()
-        from floodroute.experiments.demand import BarangayOrigin
         origins = [BarangayOrigin(
             psgc="PH060061300X", name="TestBgy",
             population_2020=10, origin_node=1, snap_distance_m=0.0,

@@ -82,8 +82,18 @@ def scenario_to_dict(
     scenario_name: str,
     scenario_id: str | None = None,
 ) -> dict:
-    """Convert ScenarioConfig to saveable dict."""
+    """Convert ScenarioConfig to saveable dict.
+
+    ``road_overrides`` is serialized as a dict sorted by edge key for
+    canonical representation; order does not affect logical content.
+    """
     sid = scenario_id or new_scenario_id()
+    _raw_overrides = getattr(scenario, "road_overrides", {}) or {}
+    # Normalize: sort by edge key, then sort each override's sub-keys
+    _canonical_overrides = {
+        k: dict(sorted(_raw_overrides[k].items()))
+        for k in sorted(_raw_overrides)
+    }
     return {
         "schema_version": SCHEMA_VERSION,
         "scenario_id": sid,
@@ -100,6 +110,7 @@ def scenario_to_dict(
         "flood_penalties": [str(p) for p in scenario.flood_penalties],
         "catalog_fingerprint": catalog_fingerprint,
         "road_conditions": list(getattr(scenario, "road_conditions", [])),
+        "road_overrides": _canonical_overrides,
     }
 
 
@@ -134,6 +145,7 @@ def scenario_from_dict(data: dict, catalog: object = None) -> tuple:
         flood_penalties=tuple(penalties),
         catalog_fingerprint=data.get("catalog_fingerprint", ""),
         road_conditions=list(data.get("road_conditions", [])),
+        road_overrides=dict(data.get("road_overrides", {})),
     )
     unresolved: list[str] = []
     if catalog is not None:
