@@ -1,0 +1,599 @@
+{
+  "schema_version": "1.0",
+  "scenario_id": "5c0a38a347f1",
+  "scenario_name": "Scenario 2",
+  "municipality": "PH0600613",
+  "return_period": "RP100",
+  "demand_mode": "fraction",
+  "demand_fraction": 0.25,
+  "demand_exact": 0,
+  "selected_facility_ids": [
+    "SJDB-001",
+    "SJDB-005",
+    "way:168969660",
+    "way:470281490",
+    "node:12884911345",
+    "way:222967562",
+    "node:6038189538",
+    "way:309025976",
+    "node:6038146387",
+    "node:6876519185",
+    "way:1512168752",
+    "way:168981804",
+    "way:168981826",
+    "way:168981805",
+    "way:1512170382",
+    "way:288888184",
+    "way:1456418103",
+    "way:735421415",
+    "way:1456414414",
+    "way:916367402",
+    "way:1461525075",
+    "way:660640228",
+    "way:838012837",
+    "way:779002464",
+    "way:982920108",
+    "way:467912749",
+    "way:1456431525",
+    "way:1338545876",
+    "way:1102859580",
+    "way:660640227",
+    "way:308845280",
+    "way:1195398988",
+    "way:735064809",
+    "way:735114963",
+    "way:779442753",
+    "node:4746848722",
+    "way:277765443",
+    "way:277765435",
+    "way:1456414776"
+  ],
+  "facility_capacities": {
+    "SJDB-001": 20000,
+    "SJDB-005": 200,
+    "way:168969660": 200,
+    "way:470281490": 200,
+    "node:12884911345": 200,
+    "way:222967562": 200,
+    "node:6038189538": 200,
+    "way:309025976": 200,
+    "node:6038146387": 200,
+    "node:6876519185": 200,
+    "way:1512168752": 200,
+    "way:168981804": 200,
+    "way:168981826": 200,
+    "way:168981805": 200,
+    "way:1512170382": 200,
+    "way:288888184": 200,
+    "way:1456418103": 200,
+    "way:735421415": 200,
+    "way:1456414414": 200,
+    "way:916367402": 200,
+    "way:1461525075": 200,
+    "way:660640228": 200,
+    "way:838012837": 200,
+    "way:779002464": 200,
+    "way:982920108": 200,
+    "way:467912749": 200,
+    "way:1456431525": 200,
+    "way:1338545876": 200,
+    "way:1102859580": 200,
+    "way:660640227": 200,
+    "way:308845280": 200,
+    "way:1195398988": 200,
+    "way:735064809": 200,
+    "way:735114963": 200,
+    "way:779442753": 200,
+    "node:4746848722": 200,
+    "way:277765443": 200,
+    "way:277765435": 200,
+    "way:1456414776": 200
+  },
+  "algorithms": [
+    "A",
+    "B",
+    "B+",
+    "C"
+  ],
+  "capacity_multipliers": [
+    0.5,
+    0.75,
+    1.0,
+    1.25
+  ],
+  "flood_penalties": [
+    "10.0"
+  ],
+  "catalog_fingerprint": "731db79b1db63939",
+  "road_conditions": [],
+  "road_overrides": {
+    "1089,219": {
+      "evidence_type": "controlled_assumption",
+      "notes": "",
+      "observation_time": "",
+      "source_reference": "",
+      "status": "flooded_passable",
+      "u": 1089,
+      "v": 219
+    },
+    "1089,71": {
+      "evidence_type": "controlled_assumption",
+      "notes": "",
+      "observation_time": "",
+      "source_reference": "",
+      "status": "flooded_passable",
+      "u": 1089,
+      "v": 71
+    },
+    "1091,1563": {
+      "evidence_type": "controlled_assumption",
+      "notes": "",
+      "observation_time": "",
+      "source_reference": "",
+      "status": "flooded_impassable",
+      "u": 1091,
+      "v": 1563
+    },
+    "1091,350": {
+      "evidence_type": "controlled_assumption",
+      "notes": "",
+      "observation_time": "",
+      "source_reference": "",
+      "status": "flooded_impassable",
+      "u": 1091,
+      "v": 350
+    },
+    "1206,191": {
+      "evidence_type": "controlled_assumption",
+      "notes": "",
+      "observation_time": "",
+      "source_reference": "",
+      "status": "flooded_passable",
+      "u": 1206,
+      "v": 191
+    },
+    "1206,72": {
+      "evidence_type": "controlled_assumption",
+      "notes": "",
+      "observation_time": "",
+      "source_reference": "",
+      "status": "flooded_passable",
+      "u": 1206,
+      "v": 72
+    },
+    "1212,136": {
+      "evidence_type": "controlled_assumption",
+      "notes": "",
+      "observation_time": "",
+      "source_reference": "",
+      "status": "flooded_impassable",
+      "u": 1212,
+      "v": 136
+    },
+    "1212,1492": {
+      "evidence_type": "controlled_assumption",
+      "notes": "",
+      "observation_time": "",
+      "source_reference": "",
+      "status": "flooded_impassable",
+      "u": 1212,
+      "v": 1492
+    },
+    "1274,191": {
+      "evidence_type": "controlled_assumption",
+      "notes": "",
+      "observation_time": "",
+      "source_reference": "",
+      "status": "flooded_passable",
+      "u": 1274,
+      "v": 191
+    },
+    "1274,219": {
+      "evidence_type": "controlled_assumption",
+      "notes": "",
+      "observation_time": "",
+      "source_reference": "",
+      "status": "flooded_passable",
+      "u": 1274,
+      "v": 219
+    },
+    "1298,356": {
+      "evidence_type": "controlled_assumption",
+      "notes": "",
+      "observation_time": "",
+      "source_reference": "",
+      "status": "flooded_impassable",
+      "u": 1298,
+      "v": 356
+    },
+    "1298,357": {
+      "evidence_type": "controlled_assumption",
+      "notes": "",
+      "observation_time": "",
+      "source_reference": "",
+      "status": "flooded_impassable",
+      "u": 1298,
+      "v": 357
+    },
+    "13,356": {
+      "evidence_type": "controlled_assumption",
+      "notes": "",
+      "observation_time": "",
+      "source_reference": "",
+      "status": "flooded_impassable",
+      "u": 13,
+      "v": 356
+    },
+    "13,818": {
+      "evidence_type": "controlled_assumption",
+      "notes": "",
+      "observation_time": "",
+      "source_reference": "",
+      "status": "flooded_impassable",
+      "u": 13,
+      "v": 818
+    },
+    "1300,1303": {
+      "evidence_type": "controlled_assumption",
+      "notes": "",
+      "observation_time": "",
+      "source_reference": "",
+      "status": "flooded_impassable",
+      "u": 1300,
+      "v": 1303
+    },
+    "1300,1305": {
+      "evidence_type": "controlled_assumption",
+      "notes": "",
+      "observation_time": "",
+      "source_reference": "",
+      "status": "flooded_impassable",
+      "u": 1300,
+      "v": 1305
+    },
+    "1303,1300": {
+      "evidence_type": "controlled_assumption",
+      "notes": "",
+      "observation_time": "",
+      "source_reference": "",
+      "status": "flooded_impassable",
+      "u": 1303,
+      "v": 1300
+    },
+    "1303,349": {
+      "evidence_type": "controlled_assumption",
+      "notes": "",
+      "observation_time": "",
+      "source_reference": "",
+      "status": "flooded_impassable",
+      "u": 1303,
+      "v": 349
+    },
+    "1305,1300": {
+      "evidence_type": "controlled_assumption",
+      "notes": "",
+      "observation_time": "",
+      "source_reference": "",
+      "status": "flooded_impassable",
+      "u": 1305,
+      "v": 1300
+    },
+    "1305,4": {
+      "evidence_type": "controlled_assumption",
+      "notes": "",
+      "observation_time": "",
+      "source_reference": "",
+      "status": "flooded_impassable",
+      "u": 1305,
+      "v": 4
+    },
+    "136,1212": {
+      "evidence_type": "controlled_assumption",
+      "notes": "",
+      "observation_time": "",
+      "source_reference": "",
+      "status": "flooded_impassable",
+      "u": 136,
+      "v": 1212
+    },
+    "1410,1492": {
+      "evidence_type": "controlled_assumption",
+      "notes": "",
+      "observation_time": "",
+      "source_reference": "",
+      "status": "flooded_impassable",
+      "u": 1410,
+      "v": 1492
+    },
+    "1410,815": {
+      "evidence_type": "controlled_assumption",
+      "notes": "",
+      "observation_time": "",
+      "source_reference": "",
+      "status": "flooded_impassable",
+      "u": 1410,
+      "v": 815
+    },
+    "1492,1212": {
+      "evidence_type": "controlled_assumption",
+      "notes": "",
+      "observation_time": "",
+      "source_reference": "",
+      "status": "flooded_impassable",
+      "u": 1492,
+      "v": 1212
+    },
+    "1492,1410": {
+      "evidence_type": "controlled_assumption",
+      "notes": "",
+      "observation_time": "",
+      "source_reference": "",
+      "status": "flooded_impassable",
+      "u": 1492,
+      "v": 1410
+    },
+    "1563,1091": {
+      "evidence_type": "controlled_assumption",
+      "notes": "",
+      "observation_time": "",
+      "source_reference": "",
+      "status": "flooded_impassable",
+      "u": 1563,
+      "v": 1091
+    },
+    "1563,425": {
+      "evidence_type": "controlled_assumption",
+      "notes": "",
+      "observation_time": "",
+      "source_reference": "",
+      "status": "flooded_impassable",
+      "u": 1563,
+      "v": 425
+    },
+    "191,1206": {
+      "evidence_type": "controlled_assumption",
+      "notes": "",
+      "observation_time": "",
+      "source_reference": "",
+      "status": "flooded_passable",
+      "u": 191,
+      "v": 1206
+    },
+    "191,1274": {
+      "evidence_type": "controlled_assumption",
+      "notes": "",
+      "observation_time": "",
+      "source_reference": "",
+      "status": "flooded_passable",
+      "u": 191,
+      "v": 1274
+    },
+    "215,226": {
+      "evidence_type": "controlled_assumption",
+      "notes": "",
+      "observation_time": "",
+      "source_reference": "",
+      "status": "flooded_passable",
+      "u": 215,
+      "v": 226
+    },
+    "216,226": {
+      "evidence_type": "controlled_assumption",
+      "notes": "",
+      "observation_time": "",
+      "source_reference": "",
+      "status": "flooded_passable",
+      "u": 216,
+      "v": 226
+    },
+    "219,1089": {
+      "evidence_type": "controlled_assumption",
+      "notes": "",
+      "observation_time": "",
+      "source_reference": "",
+      "status": "flooded_passable",
+      "u": 219,
+      "v": 1089
+    },
+    "219,1274": {
+      "evidence_type": "controlled_assumption",
+      "notes": "",
+      "observation_time": "",
+      "source_reference": "",
+      "status": "flooded_passable",
+      "u": 219,
+      "v": 1274
+    },
+    "226,215": {
+      "evidence_type": "controlled_assumption",
+      "notes": "",
+      "observation_time": "",
+      "source_reference": "",
+      "status": "flooded_passable",
+      "u": 226,
+      "v": 215
+    },
+    "226,216": {
+      "evidence_type": "controlled_assumption",
+      "notes": "",
+      "observation_time": "",
+      "source_reference": "",
+      "status": "flooded_passable",
+      "u": 226,
+      "v": 216
+    },
+    "262,349": {
+      "evidence_type": "controlled_assumption",
+      "notes": "",
+      "observation_time": "",
+      "source_reference": "",
+      "status": "flooded_impassable",
+      "u": 262,
+      "v": 349
+    },
+    "262,357": {
+      "evidence_type": "controlled_assumption",
+      "notes": "",
+      "observation_time": "",
+      "source_reference": "",
+      "status": "flooded_impassable",
+      "u": 262,
+      "v": 357
+    },
+    "349,1303": {
+      "evidence_type": "controlled_assumption",
+      "notes": "",
+      "observation_time": "",
+      "source_reference": "",
+      "status": "flooded_impassable",
+      "u": 349,
+      "v": 1303
+    },
+    "349,262": {
+      "evidence_type": "controlled_assumption",
+      "notes": "",
+      "observation_time": "",
+      "source_reference": "",
+      "status": "flooded_impassable",
+      "u": 349,
+      "v": 262
+    },
+    "350,1091": {
+      "evidence_type": "controlled_assumption",
+      "notes": "",
+      "observation_time": "",
+      "source_reference": "",
+      "status": "flooded_impassable",
+      "u": 350,
+      "v": 1091
+    },
+    "356,1298": {
+      "evidence_type": "controlled_assumption",
+      "notes": "",
+      "observation_time": "",
+      "source_reference": "",
+      "status": "flooded_impassable",
+      "u": 356,
+      "v": 1298
+    },
+    "356,13": {
+      "evidence_type": "controlled_assumption",
+      "notes": "",
+      "observation_time": "",
+      "source_reference": "",
+      "status": "flooded_impassable",
+      "u": 356,
+      "v": 13
+    },
+    "357,1298": {
+      "evidence_type": "controlled_assumption",
+      "notes": "",
+      "observation_time": "",
+      "source_reference": "",
+      "status": "flooded_impassable",
+      "u": 357,
+      "v": 1298
+    },
+    "357,262": {
+      "evidence_type": "controlled_assumption",
+      "notes": "",
+      "observation_time": "",
+      "source_reference": "",
+      "status": "flooded_impassable",
+      "u": 357,
+      "v": 262
+    },
+    "4,1305": {
+      "evidence_type": "controlled_assumption",
+      "notes": "",
+      "observation_time": "",
+      "source_reference": "",
+      "status": "flooded_impassable",
+      "u": 4,
+      "v": 1305
+    },
+    "4,425": {
+      "evidence_type": "controlled_assumption",
+      "notes": "",
+      "observation_time": "",
+      "source_reference": "",
+      "status": "flooded_impassable",
+      "u": 4,
+      "v": 425
+    },
+    "425,1563": {
+      "evidence_type": "controlled_assumption",
+      "notes": "",
+      "observation_time": "",
+      "source_reference": "",
+      "status": "flooded_impassable",
+      "u": 425,
+      "v": 1563
+    },
+    "425,4": {
+      "evidence_type": "controlled_assumption",
+      "notes": "",
+      "observation_time": "",
+      "source_reference": "",
+      "status": "flooded_impassable",
+      "u": 425,
+      "v": 4
+    },
+    "71,1089": {
+      "evidence_type": "controlled_assumption",
+      "notes": "",
+      "observation_time": "",
+      "source_reference": "",
+      "status": "flooded_passable",
+      "u": 71,
+      "v": 1089
+    },
+    "72,1206": {
+      "evidence_type": "controlled_assumption",
+      "notes": "",
+      "observation_time": "",
+      "source_reference": "",
+      "status": "flooded_passable",
+      "u": 72,
+      "v": 1206
+    },
+    "815,1410": {
+      "evidence_type": "controlled_assumption",
+      "notes": "",
+      "observation_time": "",
+      "source_reference": "",
+      "status": "flooded_impassable",
+      "u": 815,
+      "v": 1410
+    },
+    "815,818": {
+      "evidence_type": "controlled_assumption",
+      "notes": "",
+      "observation_time": "",
+      "source_reference": "",
+      "status": "flooded_impassable",
+      "u": 815,
+      "v": 818
+    },
+    "818,13": {
+      "evidence_type": "controlled_assumption",
+      "notes": "",
+      "observation_time": "",
+      "source_reference": "",
+      "status": "flooded_impassable",
+      "u": 818,
+      "v": 13
+    },
+    "818,815": {
+      "evidence_type": "controlled_assumption",
+      "notes": "",
+      "observation_time": "",
+      "source_reference": "",
+      "status": "flooded_impassable",
+      "u": 818,
+      "v": 815
+    }
+  },
+  "updated_at_utc": "2026-09-12T08:50:23.473118+00:00",
+  "created_at_utc": "2026-09-12T08:50:23.473118+00:00"
+}
