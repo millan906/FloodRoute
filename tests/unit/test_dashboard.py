@@ -8,10 +8,12 @@ from __future__ import annotations
 import pytest
 
 from floodroute.dashboard.map_builder import (
+    FACILITY_ROUTE_PALETTE,
     STATUS_AVAILABILITY,
     edge_color,
     edge_opacity,
     edge_weight,
+    facility_route_color,
     flooded_color,
 )
 from floodroute.dashboard.result_formatter import (
@@ -1232,3 +1234,61 @@ class TestSummariseUnassigned:
         assert banner_reason == panel_reason, (
             "Coverage banner and result panel must display the same reason"
         )
+
+
+# ---------------------------------------------------------------------------
+# facility_route_color — deterministic per-facility route colours
+# ---------------------------------------------------------------------------
+
+
+class TestFacilityRouteColor:
+    """Tests for facility_route_color() and FACILITY_ROUTE_PALETTE."""
+
+    def test_same_shelter_same_list_returns_same_color(self):
+        """Identical inputs must produce identical output (determinism)."""
+        nodes = [10, 20, 30]
+        assert facility_route_color(10, nodes) == facility_route_color(10, nodes)
+        assert facility_route_color(20, nodes) == facility_route_color(20, nodes)
+
+    def test_different_shelters_get_different_colors(self):
+        """Two distinct shelter nodes in the same list must receive different colors."""
+        nodes = [10, 20]
+        assert facility_route_color(10, nodes) != facility_route_color(20, nodes)
+
+    def test_color_is_palette_entry(self):
+        """Returned color must be a member of FACILITY_ROUTE_PALETTE."""
+        nodes = [5, 10, 15]
+        for s in nodes:
+            assert facility_route_color(s, nodes) in FACILITY_ROUTE_PALETTE
+
+    def test_sorted_order_determines_color(self):
+        """Position in the sorted list, not the node value, determines palette index."""
+        # Node 5 is index 1 in [3, 5, 7]; same color as index 1 applied directly.
+        nodes = [3, 5, 7]
+        expected = FACILITY_ROUTE_PALETTE[1]
+        assert facility_route_color(5, nodes) == expected
+
+    def test_unknown_shelter_returns_first_palette_entry(self):
+        """A shelter absent from the list falls back to index 0."""
+        assert facility_route_color(999, [1, 2, 3]) == FACILITY_ROUTE_PALETTE[0]
+
+    def test_split_assignment_origin_yields_two_colors(self):
+        """An origin split across two facilities must produce two distinct colors.
+
+        This is a display-layer invariant: split assignments are always visible
+        as two differently colored polylines.
+        """
+        nodes = [10, 20]
+        color_a = facility_route_color(10, nodes)
+        color_b = facility_route_color(20, nodes)
+        assert color_a != color_b, (
+            "Split-assignment routes must use different colors for each destination"
+        )
+
+    def test_palette_wraps_for_large_shelter_sets(self):
+        """With more shelters than palette entries colors wrap — no IndexError."""
+        n = len(FACILITY_ROUTE_PALETTE) + 3
+        nodes = list(range(n))
+        # Must not raise and last node must reuse a palette color
+        last_color = facility_route_color(nodes[-1], nodes)
+        assert last_color in FACILITY_ROUTE_PALETTE

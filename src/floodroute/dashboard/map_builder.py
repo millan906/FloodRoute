@@ -105,6 +105,19 @@ FLOODROUTE_COLOR: str = "#16A34A"
 #: Flood-aware feasibility reference path — purple dashed, thin.
 REFERENCE_ROUTE_COLOR: str = "#7C3AED"
 
+#: Deterministic palette for assignment-route polylines — one colour per facility.
+#: Chosen to contrast with road-hazard, waterway and existing route colours.
+FACILITY_ROUTE_PALETTE: tuple[str, ...] = (
+    "#DC2626",  # red-600
+    "#0891B2",  # cyan-600
+    "#D97706",  # amber-600
+    "#DB2777",  # pink-600
+    "#65A30D",  # lime-600
+    "#EA580C",  # orange-600
+    "#0D9488",  # teal-600
+    "#4F46E5",  # indigo-600
+)
+
 #: OSM waterways — light blue, thinner than routes.
 WATERWAY_COLOR: str = "#60A5FA"
 WATERWAY_WEIGHT: float = 1.0
@@ -171,6 +184,32 @@ def edge_opacity(status: str | None) -> float:
     if status in ("flooded", "modelled_dry"):
         return 0.85
     return 0.35
+
+
+def facility_route_color(shelter_node: int, sorted_shelter_nodes: list[int]) -> str:
+    """Return a deterministic route colour for *shelter_node*.
+
+    The position of *shelter_node* in *sorted_shelter_nodes* determines which
+    :data:`FACILITY_ROUTE_PALETTE` entry is used, so the colour is stable
+    across re-renders for the same set of assigned facilities.
+
+    Parameters
+    ----------
+    shelter_node:
+        Destination shelter node ID.
+    sorted_shelter_nodes:
+        All shelter nodes present in the current assignment, sorted ascending.
+
+    Returns
+    -------
+    str
+        CSS hex colour string, e.g. ``"#DC2626"``.
+    """
+    try:
+        idx = sorted_shelter_nodes.index(shelter_node)
+    except ValueError:
+        idx = 0
+    return FACILITY_ROUTE_PALETTE[idx % len(FACILITY_ROUTE_PALETTE)]
 
 
 # ---------------------------------------------------------------------------
@@ -483,6 +522,55 @@ def _build_legend_html(algorithm: str = "C") -> str:
 </div>"""
 
 
+def _build_assignment_legend_html(
+    assigned_shelters: list[int],
+    shelter_labels: dict,
+) -> str:
+    """Return collapsible HTML for the per-facility assignment-route legend.
+
+    Lists only facilities present in *assigned_shelters*.  Returns an empty
+    string when there are no assignments (so the caller can skip injection).
+    """
+    if not assigned_shelters:
+        return ""
+
+    rows: list[str] = []
+    for s in assigned_shelters:
+        color = facility_route_color(s, assigned_shelters)
+        fname = (shelter_labels or {}).get(s) or f"Facility {s}"
+        swatch = (
+            f'<span style="display:inline-block;width:18px;height:4px;'
+            f"background:{color};vertical-align:middle;flex-shrink:0;"
+            f'border-radius:1px;margin-right:5px;"></span>'
+        )
+        rows.append(
+            f'<div style="display:flex;align-items:center;margin:1px 0;">'
+            f"{swatch}"
+            f'<span style="flex:1;overflow:hidden;text-overflow:ellipsis;'
+            f"white-space:nowrap;\">{fname}</span></div>"
+        )
+
+    body = "\n".join(rows)
+    return f"""<div id="fr-assign-legend" style="
+    position:fixed;bottom:24px;right:10px;z-index:1000;
+    background:rgba(255,255,255,0.93);border:1px solid #CBD5E1;
+    border-radius:6px;padding:7px 10px 8px;
+    font-size:10.5px;font-family:-apple-system,sans-serif;
+    max-width:220px;box-shadow:0 2px 6px rgba(0,0,0,0.14);
+    color:#1F2937;line-height:1.45;">
+  <details>
+    <summary style="font-weight:700;font-size:11px;cursor:pointer;
+        user-select:none;display:flex;justify-content:space-between;">
+      Assignment Routes
+      <span style="font-size:9px;opacity:0.55;margin-left:4px;">&#9660;</span>
+    </summary>
+    <div style="margin-top:4px;">
+{body}
+    </div>
+  </details>
+</div>"""
+
+
 def build_analytical_map(
     G: nx.MultiDiGraph,
     return_period: str,
@@ -765,6 +853,13 @@ def build_analytical_map(
 
     origin_group.add_to(m)
 
+    # Precompute sorted shelter list for deterministic per-facility colours.
+    # Used by both the shelter-marker swatches and the route polylines.
+    _routes_map: dict = all_routes if isinstance(all_routes, dict) else {}
+    _assigned_shelters_sorted: list[int] = sorted({
+        s for (o, s), path in _routes_map.items() if path and len(path) >= 2
+    })
+
     # ── Scenario shelters ─────────────────────────────────────────────────
     shelter_group = folium.FeatureGroup(name="Scenario shelters", show=True)
     _effective_labels: dict = shelter_labels if isinstance(shelter_labels, dict) else {}
@@ -784,12 +879,21 @@ def build_analytical_map(
         ]
         if is_alg_c_target:
             tooltip_lines.append("★ Route destination selected by Algorithm C")
-        # Highlight the shelter Algorithm C actually assigned this origin to
+        tooltip_html = "<br>".join(tooltip_lines)
+        # Prepend a colour swatch when this shelter received assignments
+        if s in _assigned_shelters_sorted:
+            _swatch_color = facility_route_color(s, _assigned_shelters_sorted)
+            _swatch = (
+                f'<span style="display:inline-block;width:10px;height:10px;'
+                f"border-radius:2px;background:{_swatch_color};"
+                f'vertical-align:middle;margin-right:4px;"></span>'
+            )
+            tooltip_html = _swatch + tooltip_html
         icon_color = "red" if is_alg_c_target else "darkred"
         folium.Marker(
             location=(lat, lon),
             icon=folium.Icon(color=icon_color, icon="home", prefix="fa"),
-            tooltip="<br>".join(tooltip_lines),
+            tooltip=folium.Tooltip(tooltip_html, parse_html=True),
         ).add_to(shelter_group)
     shelter_group.add_to(m)
 
@@ -866,12 +970,49 @@ def build_analytical_map(
             ).add_to(ref_group)
         ref_group.add_to(m)
 
+    # ── All-origin assignment routes (per-facility colour) ────────────────
+    # One PolyLine per (origin, shelter) pair in all_routes.  Routes to the
+    # same destination facility share a deterministic colour from
+    # FACILITY_ROUTE_PALETTE so split-assignment origins are visually distinct.
+    if _routes_map and _assigned_shelters_sorted:
+        _route_group = folium.FeatureGroup(name="Assignment routes", show=True)
+        _eff_node_info: dict = node_info if isinstance(node_info, dict) else {}
+        _eff_labels: dict = shelter_labels if isinstance(shelter_labels, dict) else {}
+        _assignments_map: dict = result.assignments if result is not None else {}
+
+        for (origin, shelter), path in sorted(_routes_map.items()):
+            if not path or len(path) < 2:
+                continue
+            color = facility_route_color(shelter, _assigned_shelters_sorted)
+            latlons = [node_to_latlon(G, n) for n in path if n in G.nodes]
+            if len(latlons) < 2:
+                continue
+            units = _assignments_map.get((origin, shelter), 0)
+            bname = (_eff_node_info.get(origin) or {}).get("name") or f"Origin {origin}"
+            fname = _eff_labels.get(shelter) or f"Facility {shelter}"
+            folium.PolyLine(
+                latlons,
+                color=color,
+                weight=4,
+                opacity=0.85,
+                tooltip=f"{bname} \u2192 {fname}: {units:,} people",
+            ).add_to(_route_group)
+        _route_group.add_to(m)
+
     # ── Documented and candidate facilities (reference layer only) ───────
     if facility_registry:
         add_facility_layer(m, facility_registry)
 
     # ── Compact permanent legend (HTML — always visible) ──────────────────
     m.get_root().html.add_child(_BrancaElement(_build_legend_html(algorithm)))
+
+    # ── Collapsible assignment-route legend (only when assignments exist) ──
+    _assign_legend = _build_assignment_legend_html(
+        _assigned_shelters_sorted,
+        shelter_labels if isinstance(shelter_labels, dict) else {},
+    )
+    if _assign_legend:
+        m.get_root().html.add_child(_BrancaElement(_assign_legend))
 
     # ── Layer control (collapsed by default; expand via icon) ─────────────
     folium.LayerControl(collapsed=True, position="topright").add_to(m)
