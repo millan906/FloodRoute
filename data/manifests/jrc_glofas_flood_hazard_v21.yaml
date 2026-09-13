@@ -121,7 +121,7 @@ acquired_files:
     path: "raw/jrc_glofas_flood_hazard/ph0600613_jrc_glofas_v21_raw.tif"
     municipality: PH0600613
     file_size_bytes: 12628
-    sha256: "bd1d932f..."   # confirmed acquisition; exact hash in Phase A readiness report
+    sha256: "bd1d932f4d65c4218e5704e967f99a854a08d8c75f272153e8a153b762a5f6e8"
     band_type: depth_5band
   san_jose_cat:
     path: "raw/jrc_glofas_flood_hazard/ph0600613_jrc_glofas_v21_categories.tif"
